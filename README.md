@@ -40,14 +40,34 @@ docs/tasks/
 ## Quick start
 
 1. Sync dependencies with `uv sync`.
-2. Auto-configure from current Kimaki runtime:
+2. Start the autonomous runner (single command):
+
+```bash
+uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
+```
+
+This command automatically:
+
+- detects Kimaki/OpenCode availability
+- discovers projects from Kimaki mappings (or OpenCode session history)
+- scans each project's `docs/tasks/*.md`
+- starts a task session with `worktree + thread` (Kimaki mode)
+- falls back to `git worktree + opencode run` when Kimaki is unavailable
+
+For safe testing use dry-run:
+
+```bash
+uv run python -m smartworkmate.cli start --root D:\workspace --dry-run --once
+```
+
+3. Optional: project-local setup command:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . setup --auto
 ```
 
-3. Add task files under `docs/tasks/`.
-4. Run a dry-run dispatch:
+4. Add task files under `docs/tasks/`.
+5. Run a project-local dry-run dispatch:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . run-once --dry-run

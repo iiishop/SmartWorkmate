@@ -46,3 +46,9 @@ You can update `pr_url` automatically from a Kimaki session transcript:
 ```bash
 uv run python -m smartworkmate.cli --repo-root . sync-task --task-id TSK-2026-001
 ```
+
+Run global auto-discovery runner (recommended startup mode):
+
+```bash
+uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
+```

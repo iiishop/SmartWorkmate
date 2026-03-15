@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .auto_runner import start_autonomous_runner
 from .orchestrator import run_once, sync_task_from_kimaki, update_task_state
 from .setup import setup_auto
 from .task_loader import load_tasks
@@ -33,6 +34,14 @@ def main() -> None:
 
     sync_parser = subparsers.add_parser("sync-task", help="Sync task PR state from kimaki session")
     sync_parser.add_argument("--task-id", required=True, help="Task ID")
+
+    start_parser = subparsers.add_parser("start", help="Start autonomous task runner")
+    start_parser.add_argument("--root", default=".", help="Root directory used for project discovery")
+    start_parser.add_argument("--execute", action="store_true", help="Execute real dispatches")
+    start_parser.add_argument("--dry-run", action="store_true", help="Force dry-run dispatch mode")
+    start_parser.add_argument("--once", action="store_true", help="Run a single polling cycle")
+    start_parser.add_argument("--interval", type=int, default=300, help="Polling interval in seconds")
+    start_parser.add_argument("--user", default="iiishop", help="Kimaki username for new threads")
 
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -77,6 +86,18 @@ def main() -> None:
 
     if args.command == "sync-task":
         payload = sync_task_from_kimaki(repo_root, task_id=str(args.task_id))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "start":
+        execute = bool(args.execute and not args.dry_run)
+        payload = start_autonomous_runner(
+            root=Path(args.root).resolve(),
+            execute=execute,
+            once=bool(args.once or not execute),
+            interval_seconds=max(30, int(args.interval)),
+            user=str(args.user),
+        )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
