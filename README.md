@@ -24,6 +24,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Run runnable acceptance checks and auto-update task state (`verify`/`rework`/`blocked`).
 - Done gate: move `verify -> done` only after PR exists and (optionally) manual approval.
 - Refresh persistent project memory snapshot and generate idle improvement task drafts.
+- Keep `.smartworkmate/state.json` and `docs/tasks/*.md` status values synchronized automatically.
 
 ## Project layout
 
@@ -54,6 +55,7 @@ This command automatically:
 - detects Kimaki/OpenCode availability
 - discovers projects from OpenCode project roots first, then enriches with Kimaki channel mappings
 - refreshes `.smartworkmate/memory/project-memory.json` for each project
+- synchronizes state and markdown status before task decisions
 - scans each project's `docs/tasks/*.md`
 - reconciles active tasks first (sync PR URL from Kimaki, then try acceptance)
 - starts a task session with `worktree + thread` (Kimaki mode)

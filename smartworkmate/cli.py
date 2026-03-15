@@ -9,6 +9,7 @@ from .auto_runner import start_autonomous_runner
 from .orchestrator import approve_task, run_once, sync_task_from_kimaki, update_task_state
 from .proactive import create_idle_improvement_task, query_project_memory, refresh_project_memory
 from .setup import setup_auto
+from .status_sync import sync_state_and_tasks, sync_state_and_tasks_with_options
 from .task_loader import load_tasks
 
 
@@ -70,7 +71,11 @@ def main() -> None:
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
 
+    if args.command != "setup":
+        sync_state_and_tasks(repo_root)
+
     if args.command == "scan":
+        sync_result = sync_state_and_tasks(repo_root)
         tasks = load_tasks(repo_root / "docs" / "tasks")
         payload = [
             {
@@ -82,6 +87,10 @@ def main() -> None:
             }
             for task in tasks
         ]
+        payload = {
+            "sync": sync_result,
+            "tasks": payload,
+        }
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
@@ -105,6 +114,10 @@ def main() -> None:
             pr_url=str(args.pr_url),
             notes=str(args.notes),
         )
+        payload["sync"] = sync_state_and_tasks_with_options(
+            repo_root,
+            force_state_task_ids={str(args.task_id)},
+        )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
@@ -114,11 +127,19 @@ def main() -> None:
             task_id=str(args.task_id),
             approver=str(args.by),
         )
+        payload["sync"] = sync_state_and_tasks_with_options(
+            repo_root,
+            force_state_task_ids={str(args.task_id)},
+        )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     if args.command == "sync-task":
         payload = sync_task_from_kimaki(repo_root, task_id=str(args.task_id))
+        payload["sync"] = sync_state_and_tasks_with_options(
+            repo_root,
+            force_state_task_ids={str(args.task_id)},
+        )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
@@ -127,6 +148,10 @@ def main() -> None:
             repo_root,
             task_id=str(args.task_id),
             fail_on_manual_only=bool(args.fail_on_manual_only),
+        )
+        payload["sync"] = sync_state_and_tasks_with_options(
+            repo_root,
+            force_state_task_ids={str(args.task_id)},
         )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return

@@ -19,3 +19,4 @@
 - If no task is available and execute mode is on, runner can create `docs/tasks/auto/AUTO-<sha>-maintenance.md`.
 - Task dispatch prompts now include retrieved memory snippets from commits/tasks/README/hot-files.
 - `memory-query` can inspect memory snapshot relevance before running tasks.
+- State and markdown task status now auto-sync; runtime state wins once task execution metadata exists.

@@ -21,6 +21,7 @@ from .orchestrator import (
     write_run_context,
 )
 from .state_store import StateStore, TaskRecord
+from .status_sync import sync_state_and_tasks
 from .task_loader import TaskFormatError, load_tasks
 import yaml
 from .proactive import create_idle_improvement_task, refresh_project_memory
@@ -231,6 +232,15 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         tasks_dir = project_dir / "docs" / "tasks"
         if not tasks_dir.exists():
             continue
+
+        sync_result = sync_state_and_tasks(project_dir)
+        processed.append(
+            {
+                "project": str(project_dir),
+                "mode": "state_markdown_sync",
+                "result": sync_result,
+            }
+        )
 
         memory_result = refresh_project_memory(project_dir)
         processed.append(

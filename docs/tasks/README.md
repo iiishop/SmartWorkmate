@@ -25,6 +25,11 @@ Only `task_id` and `title` are strictly required in MVP. Missing fields use defa
 
 The `交付验收` section must include checkbox items like `- [ ] ...`.
 
+Status synchronization rule:
+
+- If a task already has runtime state metadata (`run_id`/`branch`/`session`/`pr_url`), state is treated as source-of-truth and markdown `status` will be auto-updated.
+- If a task has no runtime metadata yet, markdown `status` can still drive initial state.
+
 When a checkbox line contains a command in backticks, `verify-task` will execute it automatically.
 Examples:
 
