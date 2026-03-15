@@ -10,6 +10,7 @@ from pathlib import Path
 class TaskRecord:
     task_id: str
     status: str
+    base_branch: str = "main"
     branch_name: str = ""
     worktree_name: str = ""
     last_run_id: str = ""
@@ -58,6 +59,7 @@ class StateStore:
         *,
         task_id: str,
         status: str,
+        base_branch: str,
         run_id: str,
         branch_name: str,
         worktree_name: str,
@@ -71,6 +73,7 @@ class StateStore:
         state.tasks[task_id] = TaskRecord(
             task_id=task_id,
             status=status,
+            base_branch=base_branch or (previous.base_branch if previous else "main"),
             branch_name=branch_name,
             worktree_name=worktree_name,
             last_run_id=run_id,
@@ -97,6 +100,7 @@ class StateStore:
         updated = TaskRecord(
             task_id=previous.task_id,
             status=status,
+            base_branch=previous.base_branch,
             branch_name=previous.branch_name,
             worktree_name=previous.worktree_name,
             last_run_id=previous.last_run_id,

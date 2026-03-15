@@ -174,7 +174,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         if not tasks_dir.exists():
             continue
 
-        reconciliation = _reconcile_project_tasks(project_dir)
+        reconciliation = _reconcile_project_tasks(project_dir, execute=execute)
         if reconciliation["events"]:
             processed.append(
                 {
@@ -218,6 +218,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
             state,
             task_id=task.task_id,
             status=TaskStatus.IN_PROGRESS.value if execute else TaskStatus.TODO.value,
+            base_branch=task.base_branch,
             run_id=context.run_id,
             branch_name=context.branch_name,
             worktree_name=context.worktree_name,
@@ -241,6 +242,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                         state,
                         task_id=task.task_id,
                         status=TaskStatus.IN_PROGRESS.value,
+                        base_branch=task.base_branch,
                         run_id=context.run_id,
                         branch_name=context.branch_name,
                         worktree_name=context.worktree_name,
@@ -321,7 +323,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
     }
 
 
-def _reconcile_project_tasks(project_dir: Path) -> dict[str, Any]:
+def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, Any]:
     store = StateStore(project_dir / ".smartworkmate" / "state.json")
     state = store.load()
 
@@ -344,6 +346,21 @@ def _reconcile_project_tasks(project_dir: Path) -> dict[str, Any]:
 
         refreshed_state = store.load()
         refreshed = refreshed_state.tasks.get(record.task_id)
+        if execute and refreshed and not refreshed.pr_url:
+            pr_attempt = _ensure_pull_request(project_dir, refreshed)
+            event["auto_pr"] = pr_attempt
+            if pr_attempt.get("url"):
+                store.update_task_status(
+                    refreshed_state,
+                    task_id=record.task_id,
+                    status=TaskStatus.PR_OPEN.value,
+                    pr_url=str(pr_attempt["url"]),
+                    notes="auto PR created during reconcile",
+                )
+                store.save(refreshed_state)
+                refreshed_state = store.load()
+                refreshed = refreshed_state.tasks.get(record.task_id)
+
         if refreshed and refreshed.pr_url:
             verify_root = _resolve_verification_root(project_dir, refreshed)
             acceptance = evaluate_task_acceptance(
@@ -426,6 +443,101 @@ def _git_worktree_paths(project_dir: Path) -> list[dict[str, str]]:
         if item:
             entries.append(item)
     return entries
+
+
+def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str]:
+    branch = record.branch_name.strip()
+    base = record.base_branch.strip() or "main"
+    if not branch:
+        return {"result": "skipped", "reason": "missing branch name"}
+
+    existing = _gh_pr_view(project_dir, branch)
+    if existing:
+        return {"result": "exists", "url": existing}
+
+    push_result = _push_branch(project_dir, branch)
+    if push_result.get("result") != "ok":
+        return {
+            "result": "push_failed",
+            "reason": push_result.get("reason", "unknown"),
+        }
+
+    title = f"[{record.task_id}] Automated task implementation"
+    body = (
+        "## Summary\n"
+        "- Auto-created by SmartWorkmate reconcile loop\n"
+        "- Task tracked in docs/tasks with acceptance checks\n"
+    )
+    create_result = _gh_pr_create(project_dir, base=base, head=branch, title=title, body=body)
+    if create_result.get("url"):
+        return {"result": "created", "url": str(create_result["url"])}
+    return {
+        "result": "create_failed",
+        "reason": create_result.get("reason", "unknown"),
+    }
+
+
+def _push_branch(project_dir: Path, branch: str) -> dict[str, str]:
+    try:
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+        return {"result": "ok"}
+    except subprocess.CalledProcessError as error:
+        return {
+            "result": "error",
+            "reason": (error.stderr or error.stdout or "push failed").strip(),
+        }
+
+
+def _gh_pr_view(project_dir: Path, branch: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["gh", "pr", "view", branch, "--json", "url"],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+    except Exception:
+        return ""
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return ""
+    url = payload.get("url") if isinstance(payload, dict) else ""
+    return str(url or "")
+
+
+def _gh_pr_create(project_dir: Path, *, base: str, head: str, title: str, body: str) -> dict[str, str]:
+    try:
+        completed = subprocess.run(
+            ["gh", "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as error:
+        return {
+            "reason": (error.stderr or error.stdout or "gh pr create failed").strip(),
+        }
+    output = completed.stdout.strip()
+    for line in output.splitlines():
+        if line.startswith("https://"):
+            return {"url": line.strip()}
+    return {"reason": output or "missing PR URL in gh output"}
 
 
 def _dispatch_via_kimaki(
