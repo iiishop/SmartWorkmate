@@ -23,6 +23,7 @@ from .orchestrator import (
 from .state_store import StateStore, TaskRecord
 from .task_loader import TaskFormatError, load_tasks
 import yaml
+from .proactive import create_idle_improvement_task, refresh_project_memory
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -175,6 +176,15 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         if not tasks_dir.exists():
             continue
 
+        memory_result = refresh_project_memory(project_dir)
+        processed.append(
+            {
+                "project": str(project_dir),
+                "mode": "memory_refresh",
+                "result": memory_result,
+            }
+        )
+
         reconciliation = _reconcile_project_tasks(project_dir, execute=execute)
         if reconciliation["events"]:
             processed.append(
@@ -208,6 +218,15 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
 
         task = select_next_task(tasks)
         if task is None:
+            if execute:
+                idle_result = create_idle_improvement_task(project_dir, max_commits=20)
+                processed.append(
+                    {
+                        "project": str(project_dir),
+                        "mode": "idle_task",
+                        "result": idle_result,
+                    }
+                )
             continue
 
         context = build_run_context(task, dry_run=not execute)

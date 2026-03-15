@@ -7,6 +7,7 @@ from pathlib import Path
 from .acceptance import verify_task_acceptance
 from .auto_runner import start_autonomous_runner
 from .orchestrator import approve_task, run_once, sync_task_from_kimaki, update_task_state
+from .proactive import create_idle_improvement_task, refresh_project_memory
 from .setup import setup_auto
 from .task_loader import load_tasks
 
@@ -55,6 +56,12 @@ def main() -> None:
     start_parser.add_argument("--once", action="store_true", help="Run a single polling cycle")
     start_parser.add_argument("--interval", type=int, default=300, help="Polling interval in seconds")
     start_parser.add_argument("--user", default="iiishop", help="Kimaki username for new threads")
+
+    memory_parser = subparsers.add_parser("memory-refresh", help="Refresh project memory snapshot")
+    memory_parser.add_argument("--max-commits", type=int, default=80, help="Number of commits to index")
+
+    idle_parser = subparsers.add_parser("idle-task", help="Generate one auto improvement task draft")
+    idle_parser.add_argument("--max-commits", type=int, default=20, help="Recent commits to inspect")
 
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -129,6 +136,16 @@ def main() -> None:
             interval_seconds=max(30, int(args.interval)),
             user=str(args.user),
         )
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "memory-refresh":
+        payload = refresh_project_memory(repo_root, max_commits=max(10, int(args.max_commits)))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "idle-task":
+        payload = create_idle_improvement_task(repo_root, max_commits=max(5, int(args.max_commits)))
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 

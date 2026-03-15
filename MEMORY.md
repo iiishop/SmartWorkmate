@@ -15,3 +15,5 @@
 - Reconcile now auto-creates missing PRs via `gh` when branch exists and no PR URL is recorded.
 - Done gate requires `verify + pr_url` and respects `manual_approval_required` (default true).
 - Use `approve-task` to mark manual approval before reconcile can transition to `done`.
+- Runner now refreshes project memory snapshot on each cycle at `.smartworkmate/memory/project-memory.json`.
+- If no task is available and execute mode is on, runner can create `docs/tasks/auto/AUTO-<sha>-maintenance.md`.

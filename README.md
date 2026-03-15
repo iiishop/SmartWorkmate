@@ -23,6 +23,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Sync task PR URL/status from Kimaki session transcript.
 - Run runnable acceptance checks and auto-update task state (`verify`/`rework`/`blocked`).
 - Done gate: move `verify -> done` only after PR exists and (optionally) manual approval.
+- Refresh persistent project memory snapshot and generate idle improvement task drafts.
 
 ## Project layout
 
@@ -52,10 +53,12 @@ This command automatically:
 
 - detects Kimaki/OpenCode availability
 - discovers projects from Kimaki mappings (or OpenCode session history)
+- refreshes `.smartworkmate/memory/project-memory.json` for each project
 - scans each project's `docs/tasks/*.md`
 - reconciles active tasks first (sync PR URL from Kimaki, then try acceptance)
 - starts a task session with `worktree + thread` (Kimaki mode)
 - falls back to `git worktree + opencode run` when Kimaki is unavailable
+- when no task is available, can generate one draft under `docs/tasks/auto/`
 
 Behavior note:
 
@@ -116,6 +119,18 @@ Run acceptance checks for one task:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . verify-task --task-id TSK-2026-001
+```
+
+Refresh project memory snapshot:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . memory-refresh
+```
+
+Generate one idle improvement task:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . idle-task
 ```
 
 ## Notes on cloud execution

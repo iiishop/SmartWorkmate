@@ -70,6 +70,10 @@ Run global auto-discovery runner (recommended startup mode):
 uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
 ```
 
+When no TODO/REWORK task is found in a project, the runner can draft one auto task under:
+
+- `docs/tasks/auto/AUTO-<sha>-maintenance.md`
+
 Run acceptance execution for a specific task:
 
 ```bash
