@@ -22,3 +22,4 @@
 - State and markdown task status now auto-sync; runtime state wins once task execution metadata exists.
 - Some Kimaki bot-initiated sessions may start with only `任务ID` content; dispatch now sends a follow-up full prompt into the created session to enforce non-interactive execution.
 - Avoid leading prompt tokens like `任务ID:` because they may trigger reminder/scheduler-style handling; use neutral `TaskRef` wording.
+- First prompt line must be self-sufficient (task id + task file to read + no-question instruction) because some bot sessions may only ingest the first line.

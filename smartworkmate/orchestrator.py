@@ -5,6 +5,7 @@ import re
 import shutil
 import shlex
 import subprocess
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -316,7 +317,7 @@ def _build_kimaki_prompt(task: Task, *, branch_name: str, memory_context: str) -
     acceptance = "\n".join(f"- {item}" for item in task.acceptance_checks)
     refs = "\n".join(f"- {item}" for item in task.references) if task.references else "- (none)"
     return (
-        "请直接执行以下工程任务（非提醒、非排程）:\n"
+        f"执行任务 {task.task_id}（非提醒、非排程）。先读取 {task.path.name} 的完整内容并直接执行，不要提问。\n"
         f"TaskRef: {task.task_id}\n"
         f"标题: {task.title}\n"
         f"目标分支: {task.base_branch}\n"
@@ -438,7 +439,12 @@ def _extract_latest_pr_url(conversation_markdown: str) -> str:
 
 
 def _send_non_interactive_followup(*, repo_root: Path, task_id: str, full_prompt: str) -> None:
-    session_id, _thread_id = _detect_latest_kimaki_session(repo_root, task_id)
+    session_id = ""
+    for _ in range(12):
+        session_id, _thread_id = _detect_latest_kimaki_session(repo_root, task_id)
+        if session_id:
+            break
+        time.sleep(1)
     if not session_id:
         return
 
