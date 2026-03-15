@@ -12,3 +12,6 @@
 - `verify-task` runs runnable acceptance commands extracted from backticks in `交付验收`.
 - OpenCode fallback now auto-runs acceptance checks in the created worktree after execution.
 - Kimaki path is still asynchronous; acceptance remains pending until a later reconcile step.
+- Reconcile now auto-creates missing PRs via `gh` when branch exists and no PR URL is recorded.
+- Done gate requires `verify + pr_url` and respects `manual_approval_required` (default true).
+- Use `approve-task` to mark manual approval before reconcile can transition to `done`.

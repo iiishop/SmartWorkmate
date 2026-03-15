@@ -200,9 +200,26 @@ def update_task_state(
         "task_id": task_id,
         "status": updated.status,
         "pr_url": updated.pr_url,
+        "approved_by": updated.approved_by,
+        "approved_at": updated.approved_at,
         "thread_id": updated.thread_id,
         "session_id": updated.session_id,
         "updated_at": updated.updated_at,
+    }
+
+
+def approve_task(repo_root: Path, *, task_id: str, approver: str) -> dict[str, str]:
+    store = StateStore(repo_root / ".smartworkmate" / "state.json")
+    state = store.load()
+    updated = store.set_task_approval(state, task_id=task_id, approved_by=approver)
+    store.save(state)
+    return {
+        "result": "approved",
+        "task_id": task_id,
+        "approved_by": updated.approved_by,
+        "approved_at": updated.approved_at,
+        "status": updated.status,
+        "pr_url": updated.pr_url,
     }
 
 

@@ -22,6 +22,7 @@ from .orchestrator import (
 )
 from .state_store import StateStore, TaskRecord
 from .task_loader import TaskFormatError, load_tasks
+import yaml
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -330,6 +331,7 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
     active_statuses = {
         TaskStatus.IN_PROGRESS.value,
         TaskStatus.PR_OPEN.value,
+        TaskStatus.VERIFY.value,
     }
     active_records = [record for record in state.tasks.values() if record.status in active_statuses]
     events: list[dict[str, Any]] = []
@@ -385,6 +387,31 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
                 "verify_root": str(verify_root),
             }
 
+        refreshed_state = store.load()
+        refreshed = refreshed_state.tasks.get(record.task_id)
+        if refreshed and refreshed.status == TaskStatus.VERIFY.value and refreshed.pr_url:
+            if _manual_approval_required(project_dir) and not refreshed.approved_at:
+                event["done_gate"] = {
+                    "result": "awaiting_manual_approval",
+                    "required": True,
+                }
+            else:
+                done_notes = "done after verify and PR"
+                if refreshed.approved_by:
+                    done_notes += f" (approved by {refreshed.approved_by})"
+                store.update_task_status(
+                    refreshed_state,
+                    task_id=record.task_id,
+                    status=TaskStatus.DONE.value,
+                    pr_url=refreshed.pr_url,
+                    notes=done_notes,
+                )
+                store.save(refreshed_state)
+                event["done_gate"] = {
+                    "result": "done",
+                    "required": _manual_approval_required(project_dir),
+                }
+
         events.append(event)
 
     latest_state = store.load()
@@ -395,6 +422,18 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
         "events": events,
         "active_task_ids": remaining_active,
     }
+
+
+def _manual_approval_required(project_dir: Path) -> bool:
+    config_path = project_dir / ".smartworkmate" / "config.yaml"
+    if not config_path.exists():
+        return True
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return True
+    value = data.get("manual_approval_required", True)
+    return bool(value)
 
 
 def _resolve_verification_root(project_dir: Path, record: TaskRecord) -> Path:

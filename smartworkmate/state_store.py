@@ -17,6 +17,8 @@ class TaskRecord:
     session_id: str = ""
     thread_id: str = ""
     pr_url: str = ""
+    approved_by: str = ""
+    approved_at: str = ""
     notes: str = ""
     updated_at: str = ""
 
@@ -66,6 +68,8 @@ class StateStore:
         session_id: str = "",
         thread_id: str = "",
         pr_url: str = "",
+        approved_by: str = "",
+        approved_at: str = "",
         notes: str = "",
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -80,6 +84,8 @@ class StateStore:
             session_id=session_id or (previous.session_id if previous else ""),
             thread_id=thread_id or (previous.thread_id if previous else ""),
             pr_url=pr_url or (previous.pr_url if previous else ""),
+            approved_by=approved_by or (previous.approved_by if previous else ""),
+            approved_at=approved_at or (previous.approved_at if previous else ""),
             notes=notes or (previous.notes if previous else ""),
             updated_at=now,
         )
@@ -107,7 +113,38 @@ class StateStore:
             session_id=previous.session_id,
             thread_id=previous.thread_id,
             pr_url=pr_url or previous.pr_url,
+            approved_by=previous.approved_by,
+            approved_at=previous.approved_at,
             notes=notes or previous.notes,
+            updated_at=now,
+        )
+        state.tasks[task_id] = updated
+        return updated
+
+    def set_task_approval(
+        self,
+        state: State,
+        *,
+        task_id: str,
+        approved_by: str,
+    ) -> TaskRecord:
+        previous = state.tasks.get(task_id)
+        if previous is None:
+            raise KeyError(f"Task {task_id} not found in state")
+        now = datetime.now(timezone.utc).isoformat()
+        updated = TaskRecord(
+            task_id=previous.task_id,
+            status=previous.status,
+            base_branch=previous.base_branch,
+            branch_name=previous.branch_name,
+            worktree_name=previous.worktree_name,
+            last_run_id=previous.last_run_id,
+            session_id=previous.session_id,
+            thread_id=previous.thread_id,
+            pr_url=previous.pr_url,
+            approved_by=approved_by,
+            approved_at=now,
+            notes=previous.notes,
             updated_at=now,
         )
         state.tasks[task_id] = updated

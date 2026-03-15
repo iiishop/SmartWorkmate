@@ -22,6 +22,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Support manual status updates (including PR URL) via CLI.
 - Sync task PR URL/status from Kimaki session transcript.
 - Run runnable acceptance checks and auto-update task state (`verify`/`rework`/`blocked`).
+- Done gate: move `verify -> done` only after PR exists and (optionally) manual approval.
 
 ## Project layout
 
@@ -60,6 +61,7 @@ Behavior note:
 
 - Kimaki mode is asynchronous, so acceptance remains pending until session completion.
 - OpenCode fallback mode runs synchronously and now auto-runs acceptance checks in the created worktree.
+- Reconcile step can auto-create missing PRs and enforce done gating.
 
 For safe testing use dry-run:
 
@@ -96,6 +98,12 @@ Update task state after PR events:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . update-task --task-id TSK-2026-001 --status pr_open --pr-url https://github.com/org/repo/pull/123
+```
+
+Approve a verified task so reconcile can move it to `done`:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . approve-task --task-id TSK-2026-001 --by iiishop
 ```
 
 Sync task state from Kimaki session (auto-detect PR URL in transcript):

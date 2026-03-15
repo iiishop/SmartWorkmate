@@ -3,3 +3,4 @@ user: "iiishop"
 project_directory: "D:\\workspace\\projects\\SmartWorkmate"
 default_session_id: ""
 default_thread_id: ""
+manual_approval_required: true

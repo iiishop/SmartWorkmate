@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .acceptance import verify_task_acceptance
 from .auto_runner import start_autonomous_runner
-from .orchestrator import run_once, sync_task_from_kimaki, update_task_state
+from .orchestrator import approve_task, run_once, sync_task_from_kimaki, update_task_state
 from .setup import setup_auto
 from .task_loader import load_tasks
 
@@ -32,6 +32,10 @@ def main() -> None:
     update_parser.add_argument("--status", required=True, help="New status")
     update_parser.add_argument("--pr-url", default="", help="PR URL to store")
     update_parser.add_argument("--notes", default="", help="Additional notes")
+
+    approve_parser = subparsers.add_parser("approve-task", help="Approve a verified task for done transition")
+    approve_parser.add_argument("--task-id", required=True, help="Task ID")
+    approve_parser.add_argument("--by", default="iiishop", help="Approver name")
 
     sync_parser = subparsers.add_parser("sync-task", help="Sync task PR state from kimaki session")
     sync_parser.add_argument("--task-id", required=True, help="Task ID")
@@ -89,6 +93,15 @@ def main() -> None:
             status=str(args.status),
             pr_url=str(args.pr_url),
             notes=str(args.notes),
+        )
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "approve-task":
+        payload = approve_task(
+            repo_root,
+            task_id=str(args.task_id),
+            approver=str(args.by),
         )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return

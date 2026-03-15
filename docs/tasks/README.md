@@ -49,6 +49,15 @@ Local state (`.smartworkmate/state.json`) additionally tracks:
 - `thread_id`: Discord thread ID mapped to that session
 - `pr_url`: pull request URL once opened
 
+Done gate behavior:
+
+- If `manual_approval_required` is `true` in `.smartworkmate/config.yaml`, a task in `verify` with PR will wait for explicit approval.
+- Approve via:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . approve-task --task-id TSK-2026-001 --by iiishop
+```
+
 You can update `pr_url` automatically from a Kimaki session transcript:
 
 ```bash
