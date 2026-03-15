@@ -316,7 +316,8 @@ def _build_kimaki_prompt(task: Task, *, branch_name: str, memory_context: str) -
     acceptance = "\n".join(f"- {item}" for item in task.acceptance_checks)
     refs = "\n".join(f"- {item}" for item in task.references) if task.references else "- (none)"
     return (
-        f"任务ID: {task.task_id}\n"
+        "请直接执行以下工程任务（非提醒、非排程）:\n"
+        f"TaskRef: {task.task_id}\n"
         f"标题: {task.title}\n"
         f"目标分支: {task.base_branch}\n"
         f"工作分支: {branch_name}\n\n"
@@ -325,6 +326,7 @@ def _build_kimaki_prompt(task: Task, *, branch_name: str, memory_context: str) -
         "- 不要询问‘先做哪一步’或任何权限确认问题\n"
         "- 直接从分析到实现到验证连续执行，直到形成可交付结果\n"
         "- 在同一会话中先给计划再直接执行，不要等待确认\n"
+        "- 不要把该输入当作提醒或定时任务，不要查询 scheduled tasks\n"
         "- 如有不确定，采用最合理默认并继续执行，在结果中说明假设\n"
         "- 仅在真正阻塞（缺少凭证/权限/仓库不存在）时提出一个最小问题\n\n"
         "请你像真实程序员一样执行该任务：\n"
@@ -441,8 +443,9 @@ def _send_non_interactive_followup(*, repo_root: Path, task_id: str, full_prompt
         return
 
     prompt = (
-        "继续执行该任务，以下是完整任务内容。"
-        "请直接从计划进入实现和验证，不要询问下一步。\n\n"
+        "继续执行该工程任务，以下是完整任务内容。"
+        "请直接从计划进入实现和验证，不要询问下一步。"
+        "不要把任务当成提醒/排程。\n\n"
         + full_prompt
     )
     command = [
