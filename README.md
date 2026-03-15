@@ -55,6 +55,11 @@ This command automatically:
 - starts a task session with `worktree + thread` (Kimaki mode)
 - falls back to `git worktree + opencode run` when Kimaki is unavailable
 
+Behavior note:
+
+- Kimaki mode is asynchronous, so acceptance remains pending until session completion.
+- OpenCode fallback mode runs synchronously and now auto-runs acceptance checks in the created worktree.
+
 For safe testing use dry-run:
 
 ```bash

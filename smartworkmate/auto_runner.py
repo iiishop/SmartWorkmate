@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .acceptance import evaluate_task_acceptance
 from .models import TaskStatus
 from .orchestrator import (
     _detect_latest_kimaki_session,
@@ -239,6 +240,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                     "session_id": session_id,
                     "thread_id": thread_id,
                     "dispatch": dispatch_output,
+                    "acceptance": "pending_async_session_completion",
                 }
             )
             continue
@@ -252,6 +254,24 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                 base_branch=task.base_branch,
                 execute=execute,
             )
+
+            acceptance_summary: dict[str, Any] | None = None
+            if execute:
+                worktree_path = Path(dispatch_output.get("worktree", ""))
+                if worktree_path.exists():
+                    acceptance_summary = evaluate_task_acceptance(
+                        worktree_path,
+                        task_id=task.task_id,
+                        fail_on_manual_only=False,
+                    )
+                    state_store.update_task_status(
+                        state,
+                        task_id=task.task_id,
+                        status=str(acceptance_summary["status"]),
+                        notes=f"auto acceptance on worktree: {acceptance_summary['notes']}",
+                    )
+                    state_store.save(state)
+
             processed.append(
                 {
                     "project": str(project_dir),
@@ -261,6 +281,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                     "context": str(context_path),
                     "worktree": dispatch_output.get("worktree", ""),
                     "dispatch": dispatch_output.get("dispatch", ""),
+                    "acceptance": acceptance_summary,
                 }
             )
             continue

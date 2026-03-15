@@ -29,6 +29,37 @@ def verify_task_acceptance(
     task_id: str,
     fail_on_manual_only: bool,
 ) -> dict[str, Any]:
+    evaluation = evaluate_task_acceptance(
+        repo_root,
+        task_id=task_id,
+        fail_on_manual_only=fail_on_manual_only,
+    )
+
+    state_result = update_task_state(
+        repo_root,
+        task_id=task_id,
+        status=str(evaluation["status"]),
+        pr_url="",
+        notes=str(evaluation["notes"]),
+    )
+
+    return {
+        "task_id": task_id,
+        "status": evaluation["status"],
+        "runnable_checks": evaluation["runnable_checks"],
+        "manual_checks": evaluation["manual_checks"],
+        "notes": evaluation["notes"],
+        "state": state_result,
+        "results": evaluation["results"],
+    }
+
+
+def evaluate_task_acceptance(
+    repo_root: Path,
+    *,
+    task_id: str,
+    fail_on_manual_only: bool,
+) -> dict[str, Any]:
     tasks = load_tasks(repo_root / "docs" / "tasks")
     task = next((item for item in tasks if item.task_id == task_id), None)
     if task is None:
@@ -76,22 +107,12 @@ def verify_task_acceptance(
     else:
         status = TaskStatus.BLOCKED.value if fail_on_manual_only else TaskStatus.VERIFY.value
         notes = "no runnable acceptance checks found"
-
-    state_result = update_task_state(
-        repo_root,
-        task_id=task_id,
-        status=status,
-        pr_url="",
-        notes=notes,
-    )
-
     return {
         "task_id": task_id,
         "status": status,
         "runnable_checks": len(runnable_commands),
         "manual_checks": len(manual_checks),
         "notes": notes,
-        "state": state_result,
         "results": [
             {
                 "check": item.check,
