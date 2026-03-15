@@ -21,6 +21,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Assign task-specific thread names and persist detected `session_id`/`thread_id` after execute.
 - Support manual status updates (including PR URL) via CLI.
 - Sync task PR URL/status from Kimaki session transcript.
+- Run runnable acceptance checks and auto-update task state (`verify`/`rework`/`blocked`).
 
 ## Project layout
 
@@ -95,6 +96,12 @@ Sync task state from Kimaki session (auto-detect PR URL in transcript):
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . sync-task --task-id TSK-2026-001
+```
+
+Run acceptance checks for one task:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . verify-task --task-id TSK-2026-001
 ```
 
 ## Notes on cloud execution

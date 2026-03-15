@@ -25,6 +25,14 @@ Only `task_id` and `title` are strictly required in MVP. Missing fields use defa
 
 The `交付验收` section must include checkbox items like `- [ ] ...`.
 
+When a checkbox line contains a command in backticks, `verify-task` will execute it automatically.
+Examples:
+
+- `- [ ] \\`uv run pytest tests/test_auth.py -q\\``
+- `- [ ] \\`uv run python -m smartworkmate.cli --repo-root . scan\\``
+
+Checks without runnable commands are treated as manual verification items.
+
 ## State model
 
 - `todo`: not started
@@ -51,4 +59,10 @@ Run global auto-discovery runner (recommended startup mode):
 
 ```bash
 uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
+```
+
+Run acceptance execution for a specific task:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . verify-task --task-id TSK-2026-001
 ```

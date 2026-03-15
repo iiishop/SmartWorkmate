@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .acceptance import verify_task_acceptance
 from .auto_runner import start_autonomous_runner
 from .orchestrator import run_once, sync_task_from_kimaki, update_task_state
 from .setup import setup_auto
@@ -35,6 +36,14 @@ def main() -> None:
     sync_parser = subparsers.add_parser("sync-task", help="Sync task PR state from kimaki session")
     sync_parser.add_argument("--task-id", required=True, help="Task ID")
 
+    verify_parser = subparsers.add_parser("verify-task", help="Run runnable acceptance checks for one task")
+    verify_parser.add_argument("--task-id", required=True, help="Task ID")
+    verify_parser.add_argument(
+        "--fail-on-manual-only",
+        action="store_true",
+        help="Mark task blocked when no runnable commands are found",
+    )
+
     start_parser = subparsers.add_parser("start", help="Start autonomous task runner")
     start_parser.add_argument("--root", default=".", help="Root directory used for project discovery")
     start_parser.add_argument("--execute", action="store_true", help="Execute real dispatches")
@@ -58,7 +67,7 @@ def main() -> None:
             }
             for task in tasks
         ]
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     if args.command == "setup":
@@ -70,7 +79,7 @@ def main() -> None:
             "config": str(report.config_path),
             "detected": report.detected,
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     if args.command == "update-task":
@@ -81,12 +90,21 @@ def main() -> None:
             pr_url=str(args.pr_url),
             notes=str(args.notes),
         )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     if args.command == "sync-task":
         payload = sync_task_from_kimaki(repo_root, task_id=str(args.task_id))
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "verify-task":
+        payload = verify_task_acceptance(
+            repo_root,
+            task_id=str(args.task_id),
+            fail_on_manual_only=bool(args.fail_on_manual_only),
+        )
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     if args.command == "start":
@@ -98,12 +116,12 @@ def main() -> None:
             interval_seconds=max(30, int(args.interval)),
             user=str(args.user),
         )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 
     execute = bool(args.execute and not args.dry_run)
     result = run_once(repo_root, execute=execute)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=True, indent=2))
 
 
 if __name__ == "__main__":
