@@ -18,6 +18,8 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Persist orchestration state in `.smartworkmate/state.json`.
 - Dispatch one task run via `kimaki send` (dry-run supported).
 - Generate execution context payload under `.smartworkmate/runs/`.
+- Assign task-specific thread names and persist detected `session_id`/`thread_id` after execute.
+- Support manual status updates (including PR URL) via CLI.
 
 ## Project layout
 
@@ -36,26 +38,36 @@ docs/tasks/
 
 ## Quick start
 
-1. Create a virtual environment and install dependencies.
-2. Copy `.smartworkmate/config.example.yaml` to `.smartworkmate/config.yaml`.
-3. Fill in Kimaki channel/user/session defaults.
-4. Add task files under `docs/tasks/`.
-5. Run a dry-run dispatch:
+1. Sync dependencies with `uv sync`.
+2. Auto-configure from current Kimaki runtime:
 
 ```bash
-python -m smartworkmate.cli --repo-root . run-once --dry-run
+uv run python -m smartworkmate.cli --repo-root . setup --auto
+```
+
+3. Add task files under `docs/tasks/`.
+4. Run a dry-run dispatch:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . run-once --dry-run
 ```
 
 Run a real dispatch:
 
 ```bash
-python -m smartworkmate.cli --repo-root . run-once --execute
+uv run python -m smartworkmate.cli --repo-root . run-once --execute
 ```
 
 List parsed tasks:
 
 ```bash
-python -m smartworkmate.cli --repo-root . scan
+uv run python -m smartworkmate.cli --repo-root . scan
+```
+
+Update task state after PR events:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . update-task --task-id TSK-2026-001 --status pr_open --pr-url https://github.com/org/repo/pull/123
 ```
 
 ## Notes on cloud execution

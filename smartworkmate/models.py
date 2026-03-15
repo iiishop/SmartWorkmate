@@ -36,6 +36,7 @@ class RunContext:
     task: Task
     worktree_name: str
     branch_name: str
+    thread_name: str
     prompt: str
     dry_run: bool = True
     metadata: dict[str, str] = field(default_factory=dict)

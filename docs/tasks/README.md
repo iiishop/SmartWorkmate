@@ -34,3 +34,9 @@ The `交付验收` section must include checkbox items like `- [ ] ...`.
 - `done`: accepted and merged
 - `rework`: failed checks / needs retry
 - `blocked`: cannot proceed without external input
+
+Local state (`.smartworkmate/state.json`) additionally tracks:
+
+- `session_id`: detected Kimaki session ID for the task
+- `thread_id`: Discord thread ID mapped to that session
+- `pr_url`: pull request URL once opened

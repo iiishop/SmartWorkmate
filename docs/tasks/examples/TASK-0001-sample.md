@@ -20,6 +20,6 @@ references:
 
 ## 交付验收
 
-- [ ] `python -m smartworkmate.cli --repo-root . scan` 可以列出任务
-- [ ] `python -m smartworkmate.cli --repo-root . run-once --dry-run` 返回任务分发信息
+- [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可以列出任务
+- [ ] `uv run python -m smartworkmate.cli --repo-root . run-once --dry-run` 返回任务分发信息
 - [ ] `.smartworkmate/state.json` 被写入并包含任务状态
