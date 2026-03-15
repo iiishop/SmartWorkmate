@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,16 @@ from .status_sync import sync_state_and_tasks
 from .task_loader import TaskFormatError, load_tasks
 import yaml
 from .proactive import create_idle_improvement_task, refresh_project_memory
+from .runtime_guard import (
+    COMMAND_EXECUTION_FAILURE,
+    NETWORK_FAILURE,
+    PERMISSION_FAILURE,
+    TASK_FORMAT_FAILURE,
+    RuntimeCommandError,
+    acquire_task_lock,
+    release_task_lock,
+    run_or_raise,
+)
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -259,14 +270,41 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                     "project": str(project_dir),
                     "mode": "reconcile",
                     "events": reconciliation["events"],
+                    "reliability": {
+                        "lock": "enabled",
+                        "retry": "enabled",
+                        "reconcile": "active",
+                    },
                 }
             )
         if reconciliation["active_task_ids"]:
+            state_store = StateStore(project_dir / ".smartworkmate" / "state.json")
+            state = state_store.load()
+            for active_task_id in reconciliation["active_task_ids"]:
+                record = state.tasks.get(active_task_id)
+                if record is None:
+                    continue
+                state_store.update_task_status(
+                    state,
+                    task_id=active_task_id,
+                    status=record.status,
+                    pr_url=record.pr_url,
+                    notes="locked: active task already in progress/reconcile",
+                    failure_type="",
+                    failure_detail="",
+                )
+            state_store.save(state)
             processed.append(
                 {
                     "project": str(project_dir),
                     "result": "waiting_active_tasks",
                     "active_task_ids": reconciliation["active_task_ids"],
+                    "lock_state": "active_guard_locked",
+                    "reliability": {
+                        "lock": "enabled",
+                        "retry": "enabled",
+                        "reconcile": "active",
+                    },
                 }
             )
             continue
@@ -274,11 +312,29 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         try:
             tasks = load_tasks(tasks_dir)
         except TaskFormatError as error:
+            format_task_id = _extract_task_id_from_text(str(error))
+            if format_task_id:
+                state_store = StateStore(project_dir / ".smartworkmate" / "state.json")
+                state = state_store.load()
+                state_store.upsert_task(
+                    state,
+                    task_id=format_task_id,
+                    status=TaskStatus.BLOCKED.value,
+                    base_branch="main",
+                    run_id=f"format-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+                    branch_name="",
+                    worktree_name="",
+                    notes=str(error),
+                    failure_type=TASK_FORMAT_FAILURE,
+                    failure_detail=str(error),
+                )
+                state_store.save(state)
             processed.append(
                 {
                     "project": str(project_dir),
                     "result": "task_format_error",
                     "error": str(error),
+                    "failure_type": TASK_FORMAT_FAILURE,
                 }
             )
             continue
@@ -296,11 +352,32 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                 )
             continue
 
-        context = build_run_context(task, dry_run=not execute, repo_root=project_dir)
-        context_path = write_run_context(project_dir, context)
-
         state_store = StateStore(project_dir / ".smartworkmate" / "state.json")
         state = state_store.load()
+
+        context = build_run_context(task, dry_run=not execute, repo_root=project_dir)
+        lock = acquire_task_lock(
+            project_dir,
+            task_id=task.task_id,
+            run_id=context.run_id,
+            ttl_seconds=1800,
+        )
+        if not lock.acquired:
+            processed.append(
+                {
+                    "project": str(project_dir),
+                    "task_id": task.task_id,
+                    "result": "skipped_locked",
+                    "reliability": {
+                        "lock": lock.status,
+                        "owner_run_id": lock.owner_run_id,
+                        "expires_at": lock.expires_at,
+                    },
+                }
+            )
+            continue
+
+        context_path = write_run_context(project_dir, context)
         state_store.upsert_task(
             state,
             task_id=task.task_id,
@@ -309,91 +386,137 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
             run_id=context.run_id,
             branch_name=context.branch_name,
             worktree_name=context.worktree_name,
+            failure_type="",
+            failure_detail="",
         )
         state_store.save(state)
 
-        if target.channel_id and _maybe_kimaki_bin():
-            dispatch_output = _dispatch_via_kimaki(
-                project_dir=project_dir,
-                channel_id=target.channel_id,
-                user=user,
-                context=context,
-                execute=execute,
-            )
-            session_id = ""
-            thread_id = ""
-            if execute:
-                session_id, thread_id = _detect_latest_kimaki_session(project_dir, task.task_id)
-                if session_id or thread_id:
-                    state_store.upsert_task(
-                        state,
-                        task_id=task.task_id,
-                        status=TaskStatus.IN_PROGRESS.value,
-                        base_branch=task.base_branch,
-                        run_id=context.run_id,
-                        branch_name=context.branch_name,
-                        worktree_name=context.worktree_name,
-                        session_id=session_id,
-                        thread_id=thread_id,
-                    )
-                    state_store.save(state)
+        try:
+            if target.channel_id and _maybe_kimaki_bin():
+                dispatch_output = _dispatch_via_kimaki(
+                    project_dir=project_dir,
+                    channel_id=target.channel_id,
+                    user=user,
+                    context=context,
+                    execute=execute,
+                )
+                session_id = ""
+                thread_id = ""
+                if execute:
+                    session_id, thread_id = _detect_latest_kimaki_session(project_dir, task.task_id)
+                    if session_id or thread_id:
+                        state_store.upsert_task(
+                            state,
+                            task_id=task.task_id,
+                            status=TaskStatus.IN_PROGRESS.value,
+                            base_branch=task.base_branch,
+                            run_id=context.run_id,
+                            branch_name=context.branch_name,
+                            worktree_name=context.worktree_name,
+                            session_id=session_id,
+                            thread_id=thread_id,
+                            failure_type="",
+                            failure_detail="",
+                        )
+                        state_store.save(state)
 
+                processed.append(
+                    {
+                        "project": str(project_dir),
+                        "task_id": task.task_id,
+                        "mode": "kimaki",
+                        "run_id": context.run_id,
+                        "context": str(context_path),
+                        "thread_name": context.thread_name,
+                        "session_id": session_id,
+                        "thread_id": thread_id,
+                        "dispatch": dispatch_output,
+                        "acceptance": "pending_async_session_completion",
+                        "reliability": {
+                            "lock": lock.status,
+                            "retry": "enabled",
+                            "reconcile": "enabled",
+                        },
+                    }
+                )
+                continue
+
+            opencode_bin = _maybe_opencode_bin()
+            if opencode_bin:
+                dispatch_output = _dispatch_via_opencode(
+                    project_dir=project_dir,
+                    opencode_bin=opencode_bin,
+                    context=context,
+                    base_branch=task.base_branch,
+                    execute=execute,
+                )
+
+                acceptance_summary: dict[str, Any] | None = None
+                if execute:
+                    worktree_path = Path(dispatch_output.get("worktree", ""))
+                    if worktree_path.exists():
+                        acceptance_summary = evaluate_task_acceptance(
+                            worktree_path,
+                            task_id=task.task_id,
+                            fail_on_manual_only=False,
+                        )
+                        state_store.update_task_status(
+                            state,
+                            task_id=task.task_id,
+                            status=str(acceptance_summary["status"]),
+                            notes=f"auto acceptance on worktree: {acceptance_summary['notes']}",
+                            failure_type="",
+                            failure_detail="",
+                        )
+                        state_store.save(state)
+
+                processed.append(
+                    {
+                        "project": str(project_dir),
+                        "task_id": task.task_id,
+                        "mode": "opencode",
+                        "run_id": context.run_id,
+                        "context": str(context_path),
+                        "worktree": dispatch_output.get("worktree", ""),
+                        "dispatch": dispatch_output.get("dispatch", ""),
+                        "acceptance": acceptance_summary,
+                        "reliability": {
+                            "lock": lock.status,
+                            "retry": "enabled",
+                            "reconcile": "enabled",
+                        },
+                    }
+                )
+                continue
+        except RuntimeCommandError as error:
+            failure_status = _status_for_failure_type(error.failure_type, execute=execute)
+            state_store.update_task_status(
+                state,
+                task_id=task.task_id,
+                status=failure_status,
+                notes=f"dispatch failed after {error.attempts} attempts: {str(error)}",
+                failure_type=error.failure_type,
+                failure_detail=str(error),
+            )
+            state_store.save(state)
             processed.append(
                 {
                     "project": str(project_dir),
                     "task_id": task.task_id,
-                    "mode": "kimaki",
-                    "run_id": context.run_id,
-                    "context": str(context_path),
-                    "thread_name": context.thread_name,
-                    "session_id": session_id,
-                    "thread_id": thread_id,
-                    "dispatch": dispatch_output,
-                    "acceptance": "pending_async_session_completion",
+                    "result": "dispatch_failed",
+                    "error": str(error),
+                    "failure_type": error.failure_type,
+                    "attempts": error.attempts,
+                    "reliability": {
+                        "lock": lock.status,
+                        "retry": "enabled",
+                        "reconcile": "enabled",
+                    },
                 }
             )
             continue
-
-        opencode_bin = _maybe_opencode_bin()
-        if opencode_bin:
-            dispatch_output = _dispatch_via_opencode(
-                project_dir=project_dir,
-                opencode_bin=opencode_bin,
-                context=context,
-                base_branch=task.base_branch,
-                execute=execute,
-            )
-
-            acceptance_summary: dict[str, Any] | None = None
-            if execute:
-                worktree_path = Path(dispatch_output.get("worktree", ""))
-                if worktree_path.exists():
-                    acceptance_summary = evaluate_task_acceptance(
-                        worktree_path,
-                        task_id=task.task_id,
-                        fail_on_manual_only=False,
-                    )
-                    state_store.update_task_status(
-                        state,
-                        task_id=task.task_id,
-                        status=str(acceptance_summary["status"]),
-                        notes=f"auto acceptance on worktree: {acceptance_summary['notes']}",
-                    )
-                    state_store.save(state)
-
-            processed.append(
-                {
-                    "project": str(project_dir),
-                    "task_id": task.task_id,
-                    "mode": "opencode",
-                    "run_id": context.run_id,
-                    "context": str(context_path),
-                    "worktree": dispatch_output.get("worktree", ""),
-                    "dispatch": dispatch_output.get("dispatch", ""),
-                    "acceptance": acceptance_summary,
-                }
-            )
-            continue
+        finally:
+            release_task_lock(project_dir, task_id=task.task_id, run_id=context.run_id)
 
         processed.append(
             {
@@ -444,6 +567,20 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
                     status=TaskStatus.PR_OPEN.value,
                     pr_url=str(pr_attempt["url"]),
                     notes="auto PR created during reconcile",
+                )
+                store.save(refreshed_state)
+                refreshed_state = store.load()
+                refreshed = refreshed_state.tasks.get(record.task_id)
+            elif pr_attempt.get("result") in {"push_failed", "create_failed"}:
+                failure_type = str(pr_attempt.get("failure_type", COMMAND_EXECUTION_FAILURE))
+                store.update_task_status(
+                    refreshed_state,
+                    task_id=record.task_id,
+                    status=_status_for_failure_type(failure_type, execute=execute),
+                    pr_url=refreshed.pr_url if refreshed else "",
+                    notes=f"auto PR failed: {pr_attempt.get('reason', 'unknown')}",
+                    failure_type=failure_type,
+                    failure_detail=str(pr_attempt.get("reason", "unknown")),
                 )
                 store.save(refreshed_state)
                 refreshed_state = store.load()
@@ -584,6 +721,7 @@ def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str
     if push_result.get("result") != "ok":
         return {
             "result": "push_failed",
+            "failure_type": push_result.get("failure_type", COMMAND_EXECUTION_FAILURE),
             "reason": push_result.get("reason", "unknown"),
         }
 
@@ -598,26 +736,26 @@ def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str
         return {"result": "created", "url": str(create_result["url"])}
     return {
         "result": "create_failed",
+        "failure_type": create_result.get("failure_type", COMMAND_EXECUTION_FAILURE),
         "reason": create_result.get("reason", "unknown"),
     }
 
 
 def _push_branch(project_dir: Path, branch: str) -> dict[str, str]:
     try:
-        subprocess.run(
+        run_or_raise(
             ["git", "push", "-u", "origin", branch],
             cwd=project_dir,
-            check=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
+            max_retries=3,
+            base_delay_seconds=1.0,
+            max_delay_seconds=8.0,
         )
         return {"result": "ok"}
-    except subprocess.CalledProcessError as error:
+    except RuntimeCommandError as error:
         return {
             "result": "error",
-            "reason": (error.stderr or error.stdout or "push failed").strip(),
+            "failure_type": error.failure_type,
+            "reason": str(error),
         }
 
 
@@ -645,18 +783,17 @@ def _gh_pr_view(project_dir: Path, branch: str) -> str:
 
 def _gh_pr_create(project_dir: Path, *, base: str, head: str, title: str, body: str) -> dict[str, str]:
     try:
-        completed = subprocess.run(
+        completed = run_or_raise(
             ["gh", "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body],
             cwd=project_dir,
-            check=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
+            max_retries=3,
+            base_delay_seconds=1.0,
+            max_delay_seconds=8.0,
         )
-    except subprocess.CalledProcessError as error:
+    except RuntimeCommandError as error:
         return {
-            "reason": (error.stderr or error.stdout or "gh pr create failed").strip(),
+            "failure_type": error.failure_type,
+            "reason": str(error),
         }
     output = completed.stdout.strip()
     for line in output.splitlines():
@@ -692,14 +829,12 @@ def _dispatch_via_kimaki(
     if not execute:
         return "DRY-RUN: " + " ".join(command)
 
-    completed = subprocess.run(
+    completed = run_or_raise(
         command,
         cwd=project_dir,
-        check=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
+        max_retries=3,
+        base_delay_seconds=1.0,
+        max_delay_seconds=8.0,
     )
 
     _send_non_interactive_followup(
@@ -783,6 +918,23 @@ def _safe_json_command(command: list[str], *, cwd: Path) -> Any:
         except json.JSONDecodeError:
             continue
     return []
+
+
+def _status_for_failure_type(failure_type: str, *, execute: bool) -> str:
+    if not execute:
+        return TaskStatus.TODO.value
+    if failure_type == NETWORK_FAILURE:
+        return TaskStatus.TODO.value
+    if failure_type in {PERMISSION_FAILURE, TASK_FORMAT_FAILURE, COMMAND_EXECUTION_FAILURE}:
+        return TaskStatus.BLOCKED.value
+    return TaskStatus.BLOCKED.value
+
+
+def _extract_task_id_from_text(text: str) -> str:
+    match = re.search(r"(TSK-\d{4}-\d{3})", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).upper()
 
 
 def _maybe_kimaki_bin() -> str:

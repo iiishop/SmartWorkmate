@@ -224,6 +224,8 @@ def update_task_state(
         "task_id": task_id,
         "status": updated.status,
         "pr_url": updated.pr_url,
+        "failure_type": updated.failure_type,
+        "failure_detail": updated.failure_detail,
         "approved_by": updated.approved_by,
         "approved_at": updated.approved_at,
         "thread_id": updated.thread_id,

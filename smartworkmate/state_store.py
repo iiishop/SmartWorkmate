@@ -20,6 +20,8 @@ class TaskRecord:
     approved_by: str = ""
     approved_at: str = ""
     notes: str = ""
+    failure_type: str = ""
+    failure_detail: str = ""
     updated_at: str = ""
 
 
@@ -71,6 +73,8 @@ class StateStore:
         approved_by: str = "",
         approved_at: str = "",
         notes: str = "",
+        failure_type: str = "",
+        failure_detail: str = "",
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         previous = state.tasks.get(task_id)
@@ -87,6 +91,8 @@ class StateStore:
             approved_by=approved_by or (previous.approved_by if previous else ""),
             approved_at=approved_at or (previous.approved_at if previous else ""),
             notes=notes or (previous.notes if previous else ""),
+            failure_type=failure_type or (previous.failure_type if previous else ""),
+            failure_detail=failure_detail or (previous.failure_detail if previous else ""),
             updated_at=now,
         )
 
@@ -98,6 +104,8 @@ class StateStore:
         status: str,
         pr_url: str = "",
         notes: str = "",
+        failure_type: str = "",
+        failure_detail: str = "",
     ) -> TaskRecord:
         previous = state.tasks.get(task_id)
         if previous is None:
@@ -116,6 +124,8 @@ class StateStore:
             approved_by=previous.approved_by,
             approved_at=previous.approved_at,
             notes=notes or previous.notes,
+            failure_type=failure_type,
+            failure_detail=failure_detail,
             updated_at=now,
         )
         state.tasks[task_id] = updated
@@ -145,6 +155,8 @@ class StateStore:
             approved_by=approved_by,
             approved_at=now,
             notes=previous.notes,
+            failure_type=previous.failure_type,
+            failure_detail=previous.failure_detail,
             updated_at=now,
         )
         state.tasks[task_id] = updated

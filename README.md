@@ -69,6 +69,19 @@ Behavior note:
 - OpenCode fallback mode runs synchronously and now auto-runs acceptance checks in the created worktree.
 - Reconcile step can auto-create missing PRs and enforce done gating.
 
+## Reliability hardening
+
+SmartWorkmate now includes runtime reliability controls for unattended execution:
+
+- **Idempotent task lock**: dispatch acquires `.smartworkmate/locks/<task_id>.lock` with TTL before sending work.
+  A duplicated trigger for the same task is marked as `skipped_locked` and will not dispatch again.
+- **Unified retries**: `kimaki send`, `git push`, and `gh pr create` use a shared retry strategy
+  (exponential backoff, max retries) for transient network failures.
+- **Failure typing in state**: task records persist `failure_type` and `failure_detail` with
+  normalized types (`network_failure`, `permission_failure`, `task_format_failure`, `command_execution_failure`).
+- **Crash recovery / reconcile**: startup cycle always reconciles `in_progress`, `pr_open`, and `verify`
+  records first, so unfinished tasks are resumed from state and not redispatched blindly.
+
 For safe testing use dry-run:
 
 ```bash
