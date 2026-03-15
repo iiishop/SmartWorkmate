@@ -9,3 +9,6 @@
 - One-command startup is `uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop`.
 - Runner discovery priority: Kimaki project mappings, then OpenCode session history, then filesystem fallback.
 - Dispatch strategy priority: Kimaki (thread + worktree) first, OpenCode fallback (`git worktree + opencode run`) if Kimaki unavailable.
+- `verify-task` runs runnable acceptance commands extracted from backticks in `交付验收`.
+- OpenCode fallback now auto-runs acceptance checks in the created worktree after execution.
+- Kimaki path is still asynchronous; acceptance remains pending until a later reconcile step.

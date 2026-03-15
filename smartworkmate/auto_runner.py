@@ -17,9 +17,10 @@ from .orchestrator import (
     _resolve_kimaki_bin,
     build_run_context,
     select_next_task,
+    sync_task_from_kimaki,
     write_run_context,
 )
-from .state_store import StateStore
+from .state_store import StateStore, TaskRecord
 from .task_loader import TaskFormatError, load_tasks
 
 
@@ -173,6 +174,25 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         if not tasks_dir.exists():
             continue
 
+        reconciliation = _reconcile_project_tasks(project_dir)
+        if reconciliation["events"]:
+            processed.append(
+                {
+                    "project": str(project_dir),
+                    "mode": "reconcile",
+                    "events": reconciliation["events"],
+                }
+            )
+        if reconciliation["active_task_ids"]:
+            processed.append(
+                {
+                    "project": str(project_dir),
+                    "result": "waiting_active_tasks",
+                    "active_task_ids": reconciliation["active_task_ids"],
+                }
+            )
+            continue
+
         try:
             tasks = load_tasks(tasks_dir)
         except TaskFormatError as error:
@@ -299,6 +319,113 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         "targets": len(targets),
         "processed": processed,
     }
+
+
+def _reconcile_project_tasks(project_dir: Path) -> dict[str, Any]:
+    store = StateStore(project_dir / ".smartworkmate" / "state.json")
+    state = store.load()
+
+    active_statuses = {
+        TaskStatus.IN_PROGRESS.value,
+        TaskStatus.PR_OPEN.value,
+    }
+    active_records = [record for record in state.tasks.values() if record.status in active_statuses]
+    events: list[dict[str, Any]] = []
+
+    for record in active_records:
+        event: dict[str, Any] = {
+            "task_id": record.task_id,
+            "status": record.status,
+        }
+
+        if _maybe_kimaki_bin():
+            sync_result = sync_task_from_kimaki(project_dir, task_id=record.task_id)
+            event["sync"] = sync_result
+
+        refreshed_state = store.load()
+        refreshed = refreshed_state.tasks.get(record.task_id)
+        if refreshed and refreshed.pr_url:
+            verify_root = _resolve_verification_root(project_dir, refreshed)
+            acceptance = evaluate_task_acceptance(
+                verify_root,
+                task_id=record.task_id,
+                fail_on_manual_only=False,
+            )
+            store.update_task_status(
+                refreshed_state,
+                task_id=record.task_id,
+                status=str(acceptance["status"]),
+                pr_url=refreshed.pr_url,
+                notes=f"auto reconcile: {acceptance['notes']}",
+            )
+            store.save(refreshed_state)
+
+            event["acceptance"] = {
+                "status": acceptance["status"],
+                "runnable_checks": acceptance["runnable_checks"],
+                "manual_checks": acceptance["manual_checks"],
+                "notes": acceptance["notes"],
+                "verify_root": str(verify_root),
+            }
+
+        events.append(event)
+
+    latest_state = store.load()
+    remaining_active = [
+        item.task_id for item in latest_state.tasks.values() if item.status in active_statuses
+    ]
+    return {
+        "events": events,
+        "active_task_ids": remaining_active,
+    }
+
+
+def _resolve_verification_root(project_dir: Path, record: TaskRecord) -> Path:
+    worktree_paths = _git_worktree_paths(project_dir)
+    branch = record.branch_name.strip()
+
+    if branch:
+        for item in worktree_paths:
+            item_branch = item.get("branch", "")
+            if item_branch.endswith(branch):
+                path = Path(str(item.get("path", "")))
+                if path.exists():
+                    return path
+
+    conventional = project_dir.parent / f".{project_dir.name}-worktrees" / record.worktree_name
+    if record.worktree_name and conventional.exists():
+        return conventional
+
+    return project_dir
+
+
+def _git_worktree_paths(project_dir: Path) -> list[dict[str, str]]:
+    try:
+        completed = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+    except Exception:
+        return []
+
+    blocks = completed.stdout.strip().split("\n\n")
+    entries: list[dict[str, str]] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        item: dict[str, str] = {}
+        for line in lines:
+            if line.startswith("worktree "):
+                item["path"] = line.replace("worktree ", "", 1)
+            elif line.startswith("branch "):
+                item["branch"] = line.replace("branch ", "", 1)
+        if item:
+            entries.append(item)
+    return entries
 
 
 def _dispatch_via_kimaki(

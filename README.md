@@ -52,6 +52,7 @@ This command automatically:
 - detects Kimaki/OpenCode availability
 - discovers projects from Kimaki mappings (or OpenCode session history)
 - scans each project's `docs/tasks/*.md`
+- reconciles active tasks first (sync PR URL from Kimaki, then try acceptance)
 - starts a task session with `worktree + thread` (Kimaki mode)
 - falls back to `git worktree + opencode run` when Kimaki is unavailable
 
