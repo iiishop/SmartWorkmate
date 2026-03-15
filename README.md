@@ -51,6 +51,18 @@ docs/tasks/
 uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
 ```
 
+Windows one-click launcher:
+
+```bat
+start-smartworkmate.bat
+```
+
+Dry-run once mode:
+
+```bat
+start-smartworkmate.bat dry-run
+```
+
 This command automatically:
 
 - detects Kimaki/OpenCode availability

@@ -10,6 +10,7 @@ from .orchestrator import approve_task, run_once, sync_task_from_kimaki, update_
 from .proactive import create_idle_improvement_task, query_project_memory, refresh_project_memory
 from .setup import setup_auto
 from .status_sync import sync_state_and_tasks, sync_state_and_tasks_with_options
+from .task_lint import lint_tasks
 from .task_loader import load_tasks
 
 
@@ -67,6 +68,10 @@ def main() -> None:
 
     idle_parser = subparsers.add_parser("idle-task", help="Generate one auto improvement task draft")
     idle_parser.add_argument("--max-commits", type=int, default=20, help="Recent commits to inspect")
+
+    lint_parser = subparsers.add_parser("lint-task", help="Lint task markdown files")
+    lint_parser.add_argument("--path", default="", help="Relative path under docs/tasks to lint")
+    lint_parser.add_argument("--strict", action="store_true", help="Exit with non-zero code on warnings")
 
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -186,6 +191,15 @@ def main() -> None:
     if args.command == "idle-task":
         payload = create_idle_improvement_task(repo_root, max_commits=max(5, int(args.max_commits)))
         print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "lint-task":
+        payload = lint_tasks(repo_root, relative_path=str(args.path))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        if not payload.get("ok", False):
+            raise SystemExit(2)
+        if bool(args.strict) and payload.get("warnings"):
+            raise SystemExit(3)
         return
 
     execute = bool(args.execute and not args.dry_run)
