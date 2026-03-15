@@ -20,3 +20,4 @@
 - Task dispatch prompts now include retrieved memory snippets from commits/tasks/README/hot-files.
 - `memory-query` can inspect memory snapshot relevance before running tasks.
 - State and markdown task status now auto-sync; runtime state wins once task execution metadata exists.
+- Some Kimaki bot-initiated sessions may start with only `任务ID` content; dispatch now sends a follow-up full prompt into the created session to enforce non-interactive execution.

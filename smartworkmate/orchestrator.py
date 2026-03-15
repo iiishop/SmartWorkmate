@@ -126,8 +126,17 @@ def dispatch_with_kimaki(
         cwd=repo_root,
         check=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
     )
+
+    _send_non_interactive_followup(
+        repo_root=repo_root,
+        task_id=context.task.task_id,
+        full_prompt=context.prompt,
+    )
+
     return completed.stdout.strip()
 
 
@@ -424,6 +433,35 @@ def _extract_latest_pr_url(conversation_markdown: str) -> str:
     if not matches:
         return ""
     return matches[-1]
+
+
+def _send_non_interactive_followup(*, repo_root: Path, task_id: str, full_prompt: str) -> None:
+    session_id, _thread_id = _detect_latest_kimaki_session(repo_root, task_id)
+    if not session_id:
+        return
+
+    prompt = (
+        "继续执行该任务，以下是完整任务内容。"
+        "请直接从计划进入实现和验证，不要询问下一步。\n\n"
+        + full_prompt
+    )
+    command = [
+        _resolve_kimaki_bin(),
+        "send",
+        "--session",
+        session_id,
+        "--prompt",
+        prompt,
+    ]
+    subprocess.run(
+        command,
+        cwd=repo_root,
+        check=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
 
 
 def _resolve_kimaki_bin() -> str:

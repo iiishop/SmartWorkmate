@@ -15,6 +15,7 @@ from .models import TaskStatus
 from .orchestrator import (
     _detect_latest_kimaki_session,
     _resolve_kimaki_bin,
+    _send_non_interactive_followup,
     build_run_context,
     select_next_task,
     sync_task_from_kimaki,
@@ -700,6 +701,13 @@ def _dispatch_via_kimaki(
         errors="replace",
         capture_output=True,
     )
+
+    _send_non_interactive_followup(
+        repo_root=project_dir,
+        task_id=context.task.task_id,
+        full_prompt=context.prompt,
+    )
+
     return completed.stdout.strip()
 
 
