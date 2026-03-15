@@ -909,14 +909,12 @@ def _dispatch_via_opencode(
         base_delay_seconds=0.5,
         max_delay_seconds=1.0,
     )
-    completed = subprocess.run(
+    completed = run_or_raise(
         opencode_command,
         cwd=worktree_dir,
-        check=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
+        max_retries=2,
+        base_delay_seconds=1.0,
+        max_delay_seconds=4.0,
     )
 
     commit_info = ""
