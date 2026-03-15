@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .orchestrator import run_once, update_task_state
+from .orchestrator import run_once, sync_task_from_kimaki, update_task_state
 from .setup import setup_auto
 from .task_loader import load_tasks
 
@@ -30,6 +30,9 @@ def main() -> None:
     update_parser.add_argument("--status", required=True, help="New status")
     update_parser.add_argument("--pr-url", default="", help="PR URL to store")
     update_parser.add_argument("--notes", default="", help="Additional notes")
+
+    sync_parser = subparsers.add_parser("sync-task", help="Sync task PR state from kimaki session")
+    sync_parser.add_argument("--task-id", required=True, help="Task ID")
 
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -69,6 +72,11 @@ def main() -> None:
             pr_url=str(args.pr_url),
             notes=str(args.notes),
         )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "sync-task":
+        payload = sync_task_from_kimaki(repo_root, task_id=str(args.task_id))
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 

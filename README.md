@@ -20,6 +20,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Generate execution context payload under `.smartworkmate/runs/`.
 - Assign task-specific thread names and persist detected `session_id`/`thread_id` after execute.
 - Support manual status updates (including PR URL) via CLI.
+- Sync task PR URL/status from Kimaki session transcript.
 
 ## Project layout
 
@@ -68,6 +69,12 @@ Update task state after PR events:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . update-task --task-id TSK-2026-001 --status pr_open --pr-url https://github.com/org/repo/pull/123
+```
+
+Sync task state from Kimaki session (auto-detect PR URL in transcript):
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . sync-task --task-id TSK-2026-001
 ```
 
 ## Notes on cloud execution

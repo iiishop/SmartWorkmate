@@ -40,3 +40,9 @@ Local state (`.smartworkmate/state.json`) additionally tracks:
 - `session_id`: detected Kimaki session ID for the task
 - `thread_id`: Discord thread ID mapped to that session
 - `pr_url`: pull request URL once opened
+
+You can update `pr_url` automatically from a Kimaki session transcript:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . sync-task --task-id TSK-2026-001
+```

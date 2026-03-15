@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import shlex
 import subprocess
 from dataclasses import asdict
@@ -24,6 +25,7 @@ PRIORITY_ORDER = {
 }
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+PR_URL_RE = re.compile(r"https://github\.com/[^\s)]+/pull/\d+")
 
 
 def select_next_task(tasks: list[Task]) -> Task | None:
@@ -88,7 +90,7 @@ def dispatch_with_kimaki(
     channel = str(config["channel_id"])
     user = str(config.get("user", "iiishop"))
     command = [
-        "kimaki",
+        _resolve_kimaki_bin(),
         "send",
         "--channel",
         channel,
@@ -202,6 +204,71 @@ def update_task_state(
     }
 
 
+def sync_task_from_kimaki(repo_root: Path, *, task_id: str) -> dict[str, str]:
+    store = StateStore(repo_root / ".smartworkmate" / "state.json")
+    state = store.load()
+    record = state.tasks.get(task_id)
+    if record is None:
+        raise KeyError(f"Task {task_id} not found in state")
+
+    session_id = record.session_id
+    if not session_id:
+        session_id, thread_id = _detect_latest_kimaki_session(repo_root, task_id)
+        if session_id:
+            store.upsert_task(
+                state,
+                task_id=task_id,
+                status=record.status,
+                run_id=record.last_run_id,
+                branch_name=record.branch_name,
+                worktree_name=record.worktree_name,
+                session_id=session_id,
+                thread_id=thread_id,
+            )
+            store.save(state)
+            record = state.tasks[task_id]
+
+    if not session_id:
+        return {
+            "result": "no_session",
+            "task_id": task_id,
+            "status": record.status,
+            "pr_url": record.pr_url,
+            "session_id": "",
+            "thread_id": record.thread_id,
+        }
+
+    conversation = _read_session_markdown(repo_root, session_id)
+    pr_url = _extract_latest_pr_url(conversation)
+    if not pr_url:
+        return {
+            "result": "no_pr_url",
+            "task_id": task_id,
+            "status": record.status,
+            "pr_url": record.pr_url,
+            "session_id": session_id,
+            "thread_id": record.thread_id,
+        }
+
+    updated = store.update_task_status(
+        state,
+        task_id=task_id,
+        status=TaskStatus.PR_OPEN.value,
+        pr_url=pr_url,
+        notes="synced from kimaki session",
+    )
+    store.save(state)
+    return {
+        "result": "synced",
+        "task_id": task_id,
+        "status": updated.status,
+        "pr_url": updated.pr_url,
+        "session_id": updated.session_id,
+        "thread_id": updated.thread_id,
+        "updated_at": updated.updated_at,
+    }
+
+
 def _build_kimaki_prompt(task: Task, *, branch_name: str) -> str:
     acceptance = "\n".join(f"- {item}" for item in task.acceptance_checks)
     refs = "\n".join(f"- {item}" for item in task.references) if task.references else "- (none)"
@@ -233,7 +300,7 @@ def _slugify(text: str) -> str:
 
 def _detect_latest_kimaki_session(repo_root: Path, task_id: str) -> tuple[str, str]:
     command = [
-        "kimaki",
+        _resolve_kimaki_bin(),
         "session",
         "list",
         "--json",
@@ -249,7 +316,10 @@ def _detect_latest_kimaki_session(repo_root: Path, task_id: str) -> tuple[str, s
         errors="replace",
         capture_output=True,
     )
-    payload = _extract_json_payload(completed.stdout)
+    try:
+        payload = _extract_json_payload(completed.stdout)
+    except RuntimeError:
+        return "", ""
     data = json.loads(payload)
     if not isinstance(data, list):
         return "", ""
@@ -284,6 +354,44 @@ def _extract_json_payload(stdout: str) -> str:
         except json.JSONDecodeError:
             continue
     raise RuntimeError("Unable to parse JSON from kimaki output")
+
+
+def _read_session_markdown(repo_root: Path, session_id: str) -> str:
+    command = [
+        _resolve_kimaki_bin(),
+        "session",
+        "read",
+        session_id,
+        "--project",
+        str(repo_root),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=repo_root,
+        check=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    return completed.stdout
+
+
+def _extract_latest_pr_url(conversation_markdown: str) -> str:
+    matches = PR_URL_RE.findall(conversation_markdown)
+    if not matches:
+        return ""
+    return matches[-1]
+
+
+def _resolve_kimaki_bin() -> str:
+    binary = shutil.which("kimaki")
+    if binary:
+        return binary
+    fallback = Path.home() / ".kimaki" / "bin" / "kimaki.CMD"
+    if fallback.exists():
+        return str(fallback)
+    raise FileNotFoundError("kimaki executable not found")
 
 
 def _load_config(repo_root: Path) -> dict[str, object]:
