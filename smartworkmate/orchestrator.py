@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from .models import RunContext, Task, TaskStatus
+from .proactive import query_project_memory
 from .state_store import StateStore
 from .task_loader import load_tasks
 
@@ -41,7 +42,7 @@ def select_next_task(tasks: list[Task]) -> Task | None:
     )[0]
 
 
-def build_run_context(task: Task, dry_run: bool) -> RunContext:
+def build_run_context(task: Task, dry_run: bool, repo_root: Path | None = None) -> RunContext:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_id = f"run-{task.task_id.lower()}-{stamp}"
     suffix = _slugify(task.title)
@@ -49,7 +50,18 @@ def build_run_context(task: Task, dry_run: bool) -> RunContext:
     branch_name = f"task/{task.task_id.lower()}-{suffix}"[:64]
     thread_name = f"{task.task_id} | {task.title}"[:90]
 
-    prompt = _build_kimaki_prompt(task, branch_name=branch_name)
+    memory_context = ""
+    if repo_root is not None:
+        query = f"{task.title}\n{task.requirements[:240]}"
+        memory = query_project_memory(repo_root, query=query, top_k=4)
+        lines = [
+            f"- [{item.get('kind', 'memory')}] {item.get('text', '')}"
+            for item in memory.get("results", [])
+        ]
+        if lines:
+            memory_context = "\n".join(lines)
+
+    prompt = _build_kimaki_prompt(task, branch_name=branch_name, memory_context=memory_context)
     return RunContext(
         run_id=run_id,
         task=task,
@@ -124,7 +136,7 @@ def run_once(repo_root: Path, execute: bool) -> dict[str, str]:
     if task is None:
         return {"result": "No TODO/REWORK tasks found"}
 
-    context = build_run_context(task, dry_run=not execute)
+    context = build_run_context(task, dry_run=not execute, repo_root=repo_root)
     context_path = write_run_context(repo_root, context)
 
     store = StateStore(repo_root / ".smartworkmate" / "state.json")
@@ -289,7 +301,7 @@ def sync_task_from_kimaki(repo_root: Path, *, task_id: str) -> dict[str, str]:
     }
 
 
-def _build_kimaki_prompt(task: Task, *, branch_name: str) -> str:
+def _build_kimaki_prompt(task: Task, *, branch_name: str, memory_context: str) -> str:
     acceptance = "\n".join(f"- {item}" for item in task.acceptance_checks)
     refs = "\n".join(f"- {item}" for item in task.references) if task.references else "- (none)"
     return (
@@ -310,6 +322,7 @@ def _build_kimaki_prompt(task: Task, *, branch_name: str) -> str:
         f"{acceptance}\n\n"
         "引用文件:\n"
         f"{refs}\n"
+        + ("\n项目记忆上下文:\n" + memory_context + "\n" if memory_context else "")
     )
 
 

@@ -17,3 +17,5 @@
 - Use `approve-task` to mark manual approval before reconcile can transition to `done`.
 - Runner now refreshes project memory snapshot on each cycle at `.smartworkmate/memory/project-memory.json`.
 - If no task is available and execute mode is on, runner can create `docs/tasks/auto/AUTO-<sha>-maintenance.md`.
+- Task dispatch prompts now include retrieved memory snippets from commits/tasks/README/hot-files.
+- `memory-query` can inspect memory snapshot relevance before running tasks.

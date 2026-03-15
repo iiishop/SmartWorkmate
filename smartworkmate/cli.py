@@ -7,7 +7,7 @@ from pathlib import Path
 from .acceptance import verify_task_acceptance
 from .auto_runner import start_autonomous_runner
 from .orchestrator import approve_task, run_once, sync_task_from_kimaki, update_task_state
-from .proactive import create_idle_improvement_task, refresh_project_memory
+from .proactive import create_idle_improvement_task, query_project_memory, refresh_project_memory
 from .setup import setup_auto
 from .task_loader import load_tasks
 
@@ -59,6 +59,10 @@ def main() -> None:
 
     memory_parser = subparsers.add_parser("memory-refresh", help="Refresh project memory snapshot")
     memory_parser.add_argument("--max-commits", type=int, default=80, help="Number of commits to index")
+
+    memory_query_parser = subparsers.add_parser("memory-query", help="Query project memory snapshot")
+    memory_query_parser.add_argument("--query", required=True, help="Search query text")
+    memory_query_parser.add_argument("--top-k", type=int, default=5, help="Max results")
 
     idle_parser = subparsers.add_parser("idle-task", help="Generate one auto improvement task draft")
     idle_parser.add_argument("--max-commits", type=int, default=20, help="Recent commits to inspect")
@@ -141,6 +145,15 @@ def main() -> None:
 
     if args.command == "memory-refresh":
         payload = refresh_project_memory(repo_root, max_commits=max(10, int(args.max_commits)))
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return
+
+    if args.command == "memory-query":
+        payload = query_project_memory(
+            repo_root,
+            query=str(args.query),
+            top_k=max(1, int(args.top_k)),
+        )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return
 

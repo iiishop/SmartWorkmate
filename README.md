@@ -59,6 +59,7 @@ This command automatically:
 - starts a task session with `worktree + thread` (Kimaki mode)
 - falls back to `git worktree + opencode run` when Kimaki is unavailable
 - when no task is available, can generate one draft under `docs/tasks/auto/`
+- enriches task execution prompts with top relevant memory snippets from project history
 
 Behavior note:
 
@@ -125,6 +126,12 @@ Refresh project memory snapshot:
 
 ```bash
 uv run python -m smartworkmate.cli --repo-root . memory-refresh
+```
+
+Query project memory snapshot:
+
+```bash
+uv run python -m smartworkmate.cli --repo-root . memory-query --query "auth retry policy"
 ```
 
 Generate one idle improvement task:

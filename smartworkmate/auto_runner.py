@@ -229,7 +229,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                 )
             continue
 
-        context = build_run_context(task, dry_run=not execute)
+        context = build_run_context(task, dry_run=not execute, repo_root=project_dir)
         context_path = write_run_context(project_dir, context)
 
         state_store = StateStore(project_dir / ".smartworkmate" / "state.json")

@@ -73,6 +73,7 @@ uv run python -m smartworkmate.cli start --root D:\workspace --execute --user ii
 When no TODO/REWORK task is found in a project, the runner can draft one auto task under:
 
 - `docs/tasks/auto/AUTO-<sha>-maintenance.md`
+- draft contents include recent commits, TODO/FIXME markers, and hot-file hints
 
 Run acceptance execution for a specific task:
 
