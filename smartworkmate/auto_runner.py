@@ -63,16 +63,34 @@ def start_autonomous_runner(
     once: bool,
     interval_seconds: int,
     user: str,
+    live_status: bool,
 ) -> dict[str, Any]:
     summaries: list[dict[str, Any]] = []
+    cycle_index = 0
 
-    while True:
-        targets = discover_projects(root)
-        cycle_result = _run_single_cycle(targets=targets, execute=execute, user=user)
-        summaries.append(cycle_result)
-        if once:
-            break
-        time.sleep(interval_seconds)
+    try:
+        while True:
+            cycle_index += 1
+            targets = discover_projects(root)
+            cycle_result = _run_single_cycle(targets=targets, execute=execute, user=user)
+            summaries.append(cycle_result)
+            if live_status:
+                _render_live_status(
+                    cycle_index=cycle_index,
+                    cycle_result=cycle_result,
+                    root=root,
+                    execute=execute,
+                    interval_seconds=interval_seconds,
+                )
+            if once:
+                break
+            _sleep_with_heartbeat(interval_seconds, enabled=live_status)
+    except KeyboardInterrupt:
+        return {
+            "result": "stopped",
+            "execute": execute,
+            "cycles": summaries,
+        }
 
     return {
         "result": "completed_once" if once else "running",
@@ -1067,6 +1085,120 @@ def _load_execution_policy(project_dir: Path) -> ExecutionPolicy:
         require_worktree_isolation=bool(data.get("require_worktree_isolation", True)),
         auto_commit=bool(data.get("auto_commit", True)),
     )
+
+
+def _render_live_status(
+    *,
+    cycle_index: int,
+    cycle_result: dict[str, Any],
+    root: Path,
+    execute: bool,
+    interval_seconds: int,
+) -> None:
+    processed = cycle_result.get("processed", [])
+    if not isinstance(processed, list):
+        processed = []
+
+    active_lines: list[str] = []
+    dispatch_lines: list[str] = []
+    auto_lines: list[str] = []
+    pr_lines: list[str] = []
+
+    for item in processed:
+        if not isinstance(item, dict):
+            continue
+        project = str(item.get("project", ""))
+        short_project = project if len(project) <= 58 else "..." + project[-55:]
+
+        if item.get("result") == "waiting_active_tasks":
+            ids = item.get("active_task_ids", [])
+            if isinstance(ids, list) and ids:
+                active_lines.append(f"- {short_project}: active {', '.join(str(x) for x in ids)}")
+
+        mode = str(item.get("mode", ""))
+        if mode in {"kimaki", "opencode"}:
+            dispatch_lines.append(
+                f"- {short_project}: {mode} -> {item.get('task_id', '')} ({item.get('run_id', '')})"
+            )
+
+        if mode == "idle_task":
+            result = item.get("result", {})
+            if isinstance(result, dict):
+                auto_lines.append(
+                    f"- {short_project}: idle_task {result.get('result', '')} {result.get('task_id', '')}".strip()
+                )
+
+        if mode == "reconcile":
+            events = item.get("events", [])
+            if isinstance(events, list):
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+                    task_id = str(event.get("task_id", ""))
+                    sync = event.get("sync", {})
+                    auto_pr = event.get("auto_pr", {})
+                    if isinstance(sync, dict) and sync.get("pr_url"):
+                        pr_lines.append(f"- {short_project}: {task_id} PR {sync.get('pr_url', '')}")
+                    if isinstance(auto_pr, dict) and auto_pr.get("url"):
+                        pr_lines.append(f"- {short_project}: {task_id} PR {auto_pr.get('url', '')}")
+                    if isinstance(auto_pr, dict) and auto_pr.get("reason"):
+                        pr_lines.append(
+                            f"- {short_project}: {task_id} PR blocked ({auto_pr.get('reason', '')})"
+                        )
+
+    os.system("cls" if os.name == "nt" else "clear")
+    print("SmartWorkmate Live Status")
+    print(f"Time: {datetime.now().isoformat(timespec='seconds')}")
+    print(f"Root: {root}")
+    print(f"Mode: {'execute' if execute else 'dry-run'} | Cycle: {cycle_index} | Targets: {cycle_result.get('targets', 0)}")
+    print(f"Interval: {interval_seconds}s")
+    print("")
+
+    print("Current Dispatch")
+    if dispatch_lines:
+        for line in dispatch_lines[:12]:
+            print(line)
+    else:
+        print("- none")
+
+    print("")
+    print("Active Tasks")
+    if active_lines:
+        for line in active_lines[:12]:
+            print(line)
+    else:
+        print("- none")
+
+    print("")
+    print("Auto Discovery")
+    if auto_lines:
+        for line in auto_lines[:12]:
+            print(line)
+    else:
+        print("- none")
+
+    print("")
+    print("PR Status")
+    if pr_lines:
+        for line in pr_lines[:12]:
+            print(line)
+    else:
+        print("- none")
+
+
+def _sleep_with_heartbeat(seconds: int, *, enabled: bool) -> None:
+    if seconds <= 0:
+        return
+    if not enabled:
+        time.sleep(seconds)
+        return
+
+    remaining = seconds
+    while remaining > 0:
+        print(f"\rNext cycle in {remaining:3d}s (Ctrl+C to stop)", end="", flush=True)
+        time.sleep(1)
+        remaining -= 1
+    print("\rNext cycle now...                              ")
 
 
 def _extract_task_id_from_text(text: str) -> str:

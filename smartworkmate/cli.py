@@ -58,6 +58,8 @@ def main() -> None:
     start_parser.add_argument("--once", action="store_true", help="Run a single polling cycle")
     start_parser.add_argument("--interval", type=int, default=300, help="Polling interval in seconds")
     start_parser.add_argument("--user", default="iiishop", help="Kimaki username for new threads")
+    start_parser.add_argument("--live", action="store_true", help="Show live dashboard during daemon execution")
+    start_parser.add_argument("--no-live", action="store_true", help="Disable live dashboard output")
 
     memory_parser = subparsers.add_parser("memory-refresh", help="Refresh project memory snapshot")
     memory_parser.add_argument("--max-commits", type=int, default=80, help="Number of commits to index")
@@ -164,12 +166,18 @@ def main() -> None:
 
     if args.command == "start":
         execute = bool(args.execute and not args.dry_run)
+        live_status = bool(execute and not args.once)
+        if bool(args.live):
+            live_status = True
+        if bool(args.no_live):
+            live_status = False
         payload = start_autonomous_runner(
             root=Path(args.root).resolve(),
             execute=execute,
             once=bool(args.once or not execute),
             interval_seconds=max(30, int(args.interval)),
             user=str(args.user),
+            live_status=live_status,
         )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return

@@ -57,6 +57,13 @@ Windows one-click launcher:
 start-smartworkmate.bat
 ```
 
+The `.bat` launcher delegates to `start-smartworkmate.ps1` for Chinese guidance output.
+
+Live execute dashboard:
+
+- In execute daemon mode, `start` now renders a live status dashboard (projects, active tasks, auto-task actions, PR status).
+- Use `--no-live` to disable live status output.
+
 Dry-run once mode:
 
 ```bat
