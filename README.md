@@ -64,6 +64,14 @@ This command automatically:
 - when no task is available, can generate one draft under `docs/tasks/auto/`
 - enriches task execution prompts with top relevant memory snippets from project history
 
+Auto task risk policy:
+
+- Auto tasks are generated under `docs/tasks/auto/LRisk/` or `docs/tasks/auto/HRisk/`.
+- `LRisk` tasks are generated with `--FIN--` and can run automatically.
+- `HRisk` tasks are generated without `--FIN--`; they never run until a human appends `--FIN--`.
+- To limit noise, unfinished `HRisk` auto tasks are capped at 5.
+- Auto task generation checks unfinished auto tasks to avoid duplicate topics.
+
 Behavior note:
 
 - Kimaki mode is asynchronous, so acceptance remains pending until session completion.

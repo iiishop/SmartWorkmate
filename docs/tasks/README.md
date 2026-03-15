@@ -37,6 +37,12 @@ Status synchronization rule:
 - If a task already has runtime state metadata (`run_id`/`branch`/`session`/`pr_url`), state is treated as source-of-truth and markdown `status` will be auto-updated.
 - If a task has no runtime metadata yet, markdown `status` can still drive initial state.
 
+Auto task folders:
+
+- `docs/tasks/auto/LRisk/`: low-risk tasks, generated with `--FIN--`, eligible for auto execution.
+- `docs/tasks/auto/HRisk/`: high-risk tasks, generated without `--FIN--`, require manual review and freeze.
+- `HRisk` unfinished queue is capped at 5 to avoid unbounded growth.
+
 When a checkbox line contains a command in backticks, `verify-task` will execute it automatically.
 Examples:
 

@@ -9,11 +9,15 @@ from typing import Any
 
 import yaml
 
+from .models import TaskStatus
+from .task_loader import TaskFormatError, load_tasks
+
 
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_\-/\.]{2,}")
 FINDING_SCAN_EXCLUDES = (
     ":(exclude)docs/tasks/auto/**",
 )
+AUTO_HRISK_LIMIT = 5
 
 
 def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[str, Any]:
@@ -100,16 +104,35 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
     if not head_sha:
         return {"result": "skipped", "reason": "no git head sha"}
 
-    auto_dir = repo_root / "docs" / "tasks" / "auto"
-    auto_dir.mkdir(parents=True, exist_ok=True)
-    file_name = f"AUTO-{head_sha[:8]}-maintenance.md"
-    target = auto_dir / file_name
-    if target.exists():
-        return {"result": "already_exists", "path": str(target)}
-
     commits = _git_recent_commits(repo_root, max_commits=max_commits)
     findings = _git_code_findings(repo_root)
     hot_files = _git_hot_files(repo_root, max_commits=max_commits, top_n=8)
+    risk = _classify_risk(commits=commits, findings=findings)
+
+    auto_dir = repo_root / "docs" / "tasks" / "auto"
+    risk_dir = auto_dir / ("HRisk" if risk == "high" else "LRisk")
+    risk_dir.mkdir(parents=True, exist_ok=True)
+    file_name = f"AUTO-{head_sha[:8]}-maintenance.md"
+    target = risk_dir / file_name
+    if target.exists():
+        return {"result": "already_exists", "path": str(target), "risk": risk}
+
+    unfinished = _unfinished_auto_tasks(repo_root)
+    if risk == "high" and _count_unfinished_hrisk(unfinished) >= AUTO_HRISK_LIMIT:
+        return {
+            "result": "hrisk_limit_reached",
+            "risk": risk,
+            "limit": AUTO_HRISK_LIMIT,
+            "path": str(risk_dir),
+        }
+
+    topic = _derive_topic(commits=commits, findings=findings, hot_files=hot_files)
+    if _is_duplicate_unfinished(topic=topic, risk=risk, unfinished=unfinished):
+        return {
+            "result": "duplicate_unfinished",
+            "risk": risk,
+            "topic": topic,
+        }
 
     summary_lines = [f"- {item['sha'][:7]} {item['subject']}" for item in commits[:8]]
     finding_lines = [f"- {item}" for item in findings[:10]]
@@ -118,11 +141,11 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
 
     content = {
         "task_id": f"AUTO-{head_sha[:8]}",
-        "title": "Auto maintenance review from recent commits",
+        "title": f"Auto {'high-risk' if risk == 'high' else 'low-risk'} maintenance: {topic}",
         "base_branch": "main",
-        "priority": "low",
+        "priority": "high" if risk == "high" else "low",
         "status": "todo",
-        "labels": ["auto", "maintenance"],
+        "labels": ["auto", "maintenance", "hrisk" if risk == "high" else "lrisk"],
         "references": ["./MEMORY.md"],
     }
 
@@ -131,7 +154,11 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         + yaml.safe_dump(content, allow_unicode=False, sort_keys=False)
         + "---\n\n"
         + "## 任务需求\n\n"
-        + "基于最近提交记录和代码标记，挑选 1-2 个低风险改进点，形成一个清晰可审阅的 PR。\n\n"
+        + (
+            "基于最近提交记录和代码标记，提出高风险/大改动候选任务。该任务需要人工审阅并在最后添加 --FIN-- 后才会执行。\n\n"
+            if risk == "high"
+            else "基于最近提交记录和代码标记，挑选 1-2 个低风险改进点，形成一个清晰可审阅的 PR。\n\n"
+        )
         + "近期提交摘要:\n"
         + ("\n".join(summary_lines) if summary_lines else "- (no recent commits)")
         + "\n\n"
@@ -142,7 +169,11 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         + ("\n".join(f"- {item['path']} ({item['touches']} touches)" for item in hot_files) if hot_files else "- (none)")
         + "\n\n"
         + "## 任务设计\n\n"
-        + "先聚焦可快速验证的小改动（重构、注释修正、轻量 bugfix、测试补全）。"
+        + (
+            "先做影响面分析和回滚方案，再拆分为可审核的子改动。建议只在人工确认后推进。"
+            if risk == "high"
+            else "先聚焦可快速验证的小改动（重构、注释修正、轻量 bugfix、测试补全）。"
+        )
         + "实现时保持多次 commit，PR 描述中明确 why 和风险。\n\n"
         + "## 交付验收\n\n"
         + "- [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可正常执行\n"
@@ -150,7 +181,7 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         + head_sha[:8]
         + "` 返回结构化结果\n"
         + "- [ ] PR 描述清楚列出改进点、风险和回滚策略\n"
-        + "\n--FIN--\n"
+        + ("\n--FIN--\n" if risk == "low" else "")
     )
 
     target.write_text(markdown, encoding="utf-8")
@@ -158,7 +189,100 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         "result": "created",
         "task_id": content["task_id"],
         "path": str(target),
+        "risk": risk,
+        "topic": topic,
     }
+
+
+def _classify_risk(*, commits: list[dict[str, str]], findings: list[str]) -> str:
+    high_risk_tokens = (
+        "refactor",
+        "rewrite",
+        "migrate",
+        "architecture",
+        "security",
+        "auth",
+        "new feature",
+        "breaking",
+        "major",
+        "critical",
+        "crash",
+    )
+    sample_text = "\n".join([item.get("subject", "") for item in commits[:12]] + findings[:12]).lower()
+    if any(token in sample_text for token in high_risk_tokens):
+        return "high"
+    return "low"
+
+
+def _derive_topic(
+    *,
+    commits: list[dict[str, str]],
+    findings: list[str],
+    hot_files: list[dict[str, Any]],
+) -> str:
+    if findings:
+        topic = findings[0].split(":", 2)
+        if len(topic) >= 2:
+            return topic[0][-60:]
+        return findings[0][:60]
+    if hot_files:
+        return str(hot_files[0].get("path", "maintenance"))[-60:]
+    if commits:
+        return commits[0].get("subject", "maintenance")[:60]
+    return "maintenance"
+
+
+def _unfinished_auto_tasks(repo_root: Path) -> list[dict[str, str]]:
+    auto_dir = repo_root / "docs" / "tasks" / "auto"
+    if not auto_dir.exists():
+        return []
+
+    try:
+        tasks = load_tasks(auto_dir)
+    except TaskFormatError:
+        return []
+    unfinished_statuses = {
+        TaskStatus.TODO,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.VERIFY,
+        TaskStatus.PR_OPEN,
+        TaskStatus.REWORK,
+        TaskStatus.BLOCKED,
+    }
+    out: list[dict[str, str]] = []
+    for task in tasks:
+        if task.status not in unfinished_statuses:
+            continue
+        risk = "high" if "hrisk" in {label.lower() for label in task.labels} else "low"
+        out.append(
+            {
+                "task_id": task.task_id,
+                "title": task.title,
+                "risk": risk,
+            }
+        )
+    return out
+
+
+def _count_unfinished_hrisk(unfinished: list[dict[str, str]]) -> int:
+    return sum(1 for item in unfinished if item.get("risk") == "high")
+
+
+def _is_duplicate_unfinished(*, topic: str, risk: str, unfinished: list[dict[str, str]]) -> bool:
+    normalized = _normalize_text(topic)
+    if not normalized:
+        return False
+    for item in unfinished:
+        if item.get("risk") != risk:
+            continue
+        title_norm = _normalize_text(item.get("title", ""))
+        if normalized in title_norm or title_norm in normalized:
+            return True
+    return False
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
 def _git_recent_commits(repo_root: Path, *, max_commits: int) -> list[dict[str, str]]:

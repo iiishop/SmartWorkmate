@@ -28,3 +28,5 @@
 - State showed repeated PR failures with `src refspec <branch> does not match any`, indicating branch/worktree was not actually created before push.
 - Execution policy now defaults to `opencode_local` with worktree isolation + auto-commit to guarantee branch/commit existence before PR.
 - Task execution now requires markdown terminal marker `--FIN--`; drafts without it are visible in scan but not executable.
+- Auto tasks now split by risk: `auto/LRisk` (auto-runnable with --FIN--) and `auto/HRisk` (manual review required, no --FIN-- by default).
+- HRisk auto tasks have a backlog cap (5 unfinished) and duplicate-topic suppression against unfinished auto tasks.
