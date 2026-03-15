@@ -677,6 +677,8 @@ def _dispatch_via_kimaki(
         "send",
         "--channel",
         channel_id,
+        "--agent",
+        "build",
         "--prompt",
         context.prompt,
         "--name",

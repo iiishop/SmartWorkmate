@@ -106,6 +106,8 @@ def dispatch_with_kimaki(
         "send",
         "--channel",
         channel,
+        "--agent",
+        "build",
         "--prompt",
         context.prompt,
         "--name",
@@ -313,6 +315,7 @@ def _build_kimaki_prompt(task: Task, *, branch_name: str, memory_context: str) -
         "要求:\n"
         "- 不要询问‘先做哪一步’或任何权限确认问题\n"
         "- 直接从分析到实现到验证连续执行，直到形成可交付结果\n"
+        "- 在同一会话中先给计划再直接执行，不要等待确认\n"
         "- 如有不确定，采用最合理默认并继续执行，在结果中说明假设\n"
         "- 仅在真正阻塞（缺少凭证/权限/仓库不存在）时提出一个最小问题\n\n"
         "请你像真实程序员一样执行该任务：\n"
