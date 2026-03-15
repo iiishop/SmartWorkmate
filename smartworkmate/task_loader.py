@@ -9,6 +9,7 @@ from .models import Task, TaskStatus
 
 
 REQUIRED_SECTIONS = ("任务需求", "任务设计", "交付验收")
+FIN_MARKER = "--FIN--"
 
 
 class TaskFormatError(ValueError):
@@ -57,7 +58,12 @@ def load_task_file(path: Path) -> Task:
         requirements=sections["任务需求"].strip(),
         design=sections["任务设计"].strip(),
         acceptance_checks=acceptance_checks,
+        finalized=_has_fin_marker(text),
     )
+
+
+def _has_fin_marker(text: str) -> bool:
+    return text.rstrip().endswith(FIN_MARKER)
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:

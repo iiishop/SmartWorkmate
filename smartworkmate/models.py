@@ -28,6 +28,7 @@ class Task:
     requirements: str
     design: str
     acceptance_checks: list[str]
+    finalized: bool
 
 
 @dataclass(slots=True)

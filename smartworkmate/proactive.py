@@ -11,6 +11,9 @@ import yaml
 
 
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_\-/\.]{2,}")
+FINDING_SCAN_EXCLUDES = (
+    ":(exclude)docs/tasks/auto/**",
+)
 
 
 def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[str, Any]:
@@ -147,6 +150,7 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         + head_sha[:8]
         + "` 返回结构化结果\n"
         + "- [ ] PR 描述清楚列出改进点、风险和回滚策略\n"
+        + "\n--FIN--\n"
     )
 
     target.write_text(markdown, encoding="utf-8")
@@ -216,8 +220,18 @@ def _git_head_sha(repo_root: Path) -> str:
 
 
 def _git_code_findings(repo_root: Path) -> list[str]:
+    command = [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "TODO|FIXME|HACK",
+        "--",
+        ".",
+        *FINDING_SCAN_EXCLUDES,
+    ]
     completed = subprocess.run(
-        ["git", "grep", "-n", "-E", "TODO|FIXME|HACK"],
+        command,
         cwd=repo_root,
         check=False,
         text=True,
@@ -225,8 +239,15 @@ def _git_code_findings(repo_root: Path) -> list[str]:
         errors="replace",
         capture_output=True,
     )
-    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    return lines
+    findings: list[str] = []
+    seen: set[str] = set()
+    for raw in completed.stdout.splitlines():
+        line = raw.strip()
+        if not line or line in seen:
+            continue
+        findings.append(line)
+        seen.add(line)
+    return findings
 
 
 def _collect_task_files(repo_root: Path) -> list[str]:

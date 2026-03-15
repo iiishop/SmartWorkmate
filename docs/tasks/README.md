@@ -25,6 +25,13 @@ Only `task_id` and `title` are strictly required in MVP. Missing fields use defa
 
 The `交付验收` section must include checkbox items like `- [ ] ...`.
 
+Finalization gate (required):
+
+- A task file is executable only when the file ends with `--FIN--` as the final marker.
+- While drafting requirements/design, do not add `--FIN--`.
+- After the task is frozen and ready for automation, append `--FIN--` on the last line.
+- After `--FIN--` is added, do not edit the task content except by creating a new task file for follow-up work.
+
 Status synchronization rule:
 
 - If a task already has runtime state metadata (`run_id`/`branch`/`session`/`pr_url`), state is treated as source-of-truth and markdown `status` will be auto-updated.
@@ -79,6 +86,7 @@ When no TODO/REWORK task is found in a project, the runner can draft one auto ta
 
 - `docs/tasks/auto/AUTO-<sha>-maintenance.md`
 - draft contents include recent commits, TODO/FIXME markers, and hot-file hints
+- marker scan excludes `docs/tasks/auto/**` to avoid recursive self-references from previous auto tasks
 
 Run acceptance execution for a specific task:
 

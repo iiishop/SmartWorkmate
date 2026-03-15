@@ -3,7 +3,7 @@ task_id: TSK-2026-002
 title: Reliability hardening for autonomous runner
 base_branch: main
 priority: high
-status: verify
+status: blocked
 labels: [reliability, orchestration, safety]
 references:
   - ./README.md
@@ -40,3 +40,5 @@ references:
 - [ ] `python -m unittest discover -s tests -p "test_*.py"` 至少覆盖 runtime_guard 相关测试并通过
 - [ ] 当同一 task 被重复触发时，状态中可观测到防重入行为（例如 skipped/locked 说明）
 - [ ] 至少补充一段 README 文档，说明可靠性策略与恢复机制
+
+--FIN--

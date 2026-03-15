@@ -24,3 +24,7 @@
 - Avoid leading prompt tokens like `任务ID:` because they may trigger reminder/scheduler-style handling; use neutral `TaskRef` wording.
 - First prompt line must be self-sufficient (task id + task file to read + no-question instruction) because some bot sessions may only ingest the first line.
 - Acceptance checks must not include `verify-task` command for the same task ID; this creates recursive self-invocation and can appear as hangs.
+- Current Kimaki bot sessions are starting on shared server directory `D:\workspace` (from kimaki.log), so `--worktree` isolation is not being honored yet in runtime.
+- State showed repeated PR failures with `src refspec <branch> does not match any`, indicating branch/worktree was not actually created before push.
+- Execution policy now defaults to `opencode_local` with worktree isolation + auto-commit to guarantee branch/commit existence before PR.
+- Task execution now requires markdown terminal marker `--FIN--`; drafts without it are visible in scan but not executable.

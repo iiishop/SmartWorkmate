@@ -25,6 +25,7 @@ It watches `docs/tasks/*.md`, picks a task, prepares a worktree execution prompt
 - Done gate: move `verify -> done` only after PR exists and (optionally) manual approval.
 - Refresh persistent project memory snapshot and generate idle improvement task drafts.
 - Keep `.smartworkmate/state.json` and `docs/tasks/*.md` status values synchronized automatically.
+- Execute tasks only when task markdown is finalized with terminal marker `--FIN--`.
 
 ## Project layout
 
@@ -59,7 +60,7 @@ This command automatically:
 - scans each project's `docs/tasks/*.md`
 - reconciles active tasks first (sync PR URL from Kimaki, then try acceptance)
 - starts a task session with `worktree + thread` (Kimaki mode)
-- falls back to `git worktree + opencode run` when Kimaki is unavailable
+- defaults to isolated local execution (`git worktree + opencode run`) and keeps Kimaki for coordination
 - when no task is available, can generate one draft under `docs/tasks/auto/`
 - enriches task execution prompts with top relevant memory snippets from project history
 
@@ -81,6 +82,13 @@ SmartWorkmate now includes runtime reliability controls for unattended execution
   normalized types (`network_failure`, `permission_failure`, `task_format_failure`, `command_execution_failure`).
 - **Crash recovery / reconcile**: startup cycle always reconciles `in_progress`, `pr_open`, and `verify`
   records first, so unfinished tasks are resumed from state and not redispatched blindly.
+- **Branch/PR guard**: PR creation now requires branch existence and commits ahead of base.
+- **Isolation policy**: execution backend is configurable; default backend is `opencode_local` with worktree isolation enabled.
+
+## Task finalization rule
+
+- A task markdown is eligible for execution only when its final line is `--FIN--`.
+- This acts as a freeze marker. After adding it, treat the task content as immutable.
 
 For safe testing use dry-run:
 

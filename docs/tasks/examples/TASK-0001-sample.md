@@ -3,7 +3,7 @@ task_id: TSK-2026-001
 title: Bootstrap SmartWorkmate orchestrator
 base_branch: main
 priority: high
-status: todo
+status: done
 labels: [foundation, automation]
 references:
   - ./docs/tasks/README.md
@@ -23,3 +23,5 @@ references:
 - [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可以列出任务
 - [ ] `uv run python -m smartworkmate.cli --repo-root . run-once --dry-run` 返回任务分发信息
 - [ ] `.smartworkmate/state.json` 被写入并包含任务状态
+
+--FIN--

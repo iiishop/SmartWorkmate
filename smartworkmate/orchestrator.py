@@ -31,7 +31,11 @@ PR_URL_RE = re.compile(r"https://github\.com/[^\s)]+/pull/\d+")
 
 
 def select_next_task(tasks: list[Task]) -> Task | None:
-    candidates = [task for task in tasks if task.status in {TaskStatus.TODO, TaskStatus.REWORK}]
+    candidates = [
+        task
+        for task in tasks
+        if task.status in {TaskStatus.TODO, TaskStatus.REWORK} and task.finalized
+    ]
     if not candidates:
         return None
     return sorted(
@@ -380,15 +384,23 @@ def _detect_latest_kimaki_session(repo_root: Path, task_id: str) -> tuple[str, s
     if not isinstance(data, list):
         return "", ""
 
+    task_token = task_id.lower()
+
+    def _looks_like_task_session(item: dict[str, object]) -> bool:
+        searchable = (
+            str(item.get("title", "")),
+            str(item.get("name", "")),
+            str(item.get("prompt", "")),
+            str(item.get("lastPrompt", "")),
+        )
+        return any(task_token in value.lower() for value in searchable)
+
     candidates = [
         item
         for item in data
         if isinstance(item, dict)
         and str(item.get("source", "")) == "kimaki"
-        and (
-            task_id in str(item.get("title", ""))
-            or str(item.get("threadId", ""))
-        )
+        and _looks_like_task_session(item)
     ]
     if not candidates:
         return "", ""

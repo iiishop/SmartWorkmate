@@ -83,6 +83,7 @@ def main() -> None:
                 "title": task.title,
                 "priority": task.priority,
                 "status": task.status.value,
+                "finalized": task.finalized,
                 "path": str(task.path.relative_to(repo_root)),
             }
             for task in tasks

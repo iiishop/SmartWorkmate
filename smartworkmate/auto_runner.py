@@ -49,6 +49,13 @@ class ProjectTarget:
     channel_name: str = ""
 
 
+@dataclass(slots=True)
+class ExecutionPolicy:
+    backend: str
+    require_worktree_isolation: bool
+    auto_commit: bool
+
+
 def start_autonomous_runner(
     *,
     root: Path,
@@ -244,15 +251,21 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         tasks_dir = project_dir / "docs" / "tasks"
         if not tasks_dir.exists():
             continue
+        policy = _load_execution_policy(project_dir)
 
         sync_result = sync_state_and_tasks(project_dir)
         processed.append(
-            {
-                "project": str(project_dir),
-                "mode": "state_markdown_sync",
-                "result": sync_result,
-            }
-        )
+                {
+                    "project": str(project_dir),
+                    "mode": "state_markdown_sync",
+                    "result": sync_result,
+                    "policy": {
+                        "backend": policy.backend,
+                        "require_worktree_isolation": policy.require_worktree_isolation,
+                        "auto_commit": policy.auto_commit,
+                    },
+                }
+            )
 
         memory_result = refresh_project_memory(project_dir)
         processed.append(
@@ -392,7 +405,11 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
         state_store.save(state)
 
         try:
-            if target.channel_id and _maybe_kimaki_bin():
+            use_kimaki_backend = policy.backend == "kimaki"
+            if policy.require_worktree_isolation and use_kimaki_backend:
+                use_kimaki_backend = False
+
+            if use_kimaki_backend and target.channel_id and _maybe_kimaki_bin():
                 dispatch_output = _dispatch_via_kimaki(
                     project_dir=project_dir,
                     channel_id=target.channel_id,
@@ -449,6 +466,7 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                     context=context,
                     base_branch=task.base_branch,
                     execute=execute,
+                    auto_commit=policy.auto_commit,
                 )
 
                 acceptance_summary: dict[str, Any] | None = None
@@ -713,6 +731,14 @@ def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str
     if not branch:
         return {"result": "skipped", "reason": "missing branch name"}
 
+    branch_guard = _validate_branch_ready_for_pr(project_dir, base=base, branch=branch)
+    if branch_guard.get("ok") != "true":
+        return {
+            "result": "push_failed",
+            "failure_type": branch_guard.get("failure_type", COMMAND_EXECUTION_FAILURE),
+            "reason": branch_guard.get("reason", "branch not ready for PR"),
+        }
+
     existing = _gh_pr_view(project_dir, branch)
     if existing:
         return {"result": "exists", "url": existing}
@@ -853,6 +879,7 @@ def _dispatch_via_opencode(
     context: Any,
     base_branch: str,
     execute: bool,
+    auto_commit: bool,
 ) -> dict[str, str]:
     worktree_root = project_dir.parent / f".{project_dir.name}-worktrees"
     worktree_dir = worktree_root / context.worktree_name
@@ -875,7 +902,13 @@ def _dispatch_via_opencode(
         }
 
     worktree_root.mkdir(parents=True, exist_ok=True)
-    subprocess.run(git_command, cwd=project_dir, check=True, text=True, capture_output=True)
+    run_or_raise(
+        git_command,
+        cwd=project_dir,
+        max_retries=1,
+        base_delay_seconds=0.5,
+        max_delay_seconds=1.0,
+    )
     completed = subprocess.run(
         opencode_command,
         cwd=worktree_dir,
@@ -886,9 +919,13 @@ def _dispatch_via_opencode(
         capture_output=True,
     )
 
+    commit_info = ""
+    if auto_commit:
+        commit_info = _auto_commit_worktree(worktree_dir, context.task.task_id, context.task.title)
+
     return {
         "worktree": str(worktree_dir),
-        "dispatch": completed.stdout.strip(),
+        "dispatch": (completed.stdout.strip() + ("\n" + commit_info if commit_info else "")).strip(),
     }
 
 
@@ -930,8 +967,112 @@ def _status_for_failure_type(failure_type: str, *, execute: bool) -> str:
     return TaskStatus.BLOCKED.value
 
 
+def _validate_branch_ready_for_pr(project_dir: Path, *, base: str, branch: str) -> dict[str, str]:
+    exists = subprocess.run(
+        ["git", "rev-parse", "--verify", branch],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if exists.returncode != 0:
+        return {
+            "ok": "false",
+            "failure_type": COMMAND_EXECUTION_FAILURE,
+            "reason": f"branch {branch} not found for PR",
+        }
+
+    ahead = subprocess.run(
+        ["git", "rev-list", "--count", f"{base}..{branch}"],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if ahead.returncode != 0:
+        return {
+            "ok": "false",
+            "failure_type": COMMAND_EXECUTION_FAILURE,
+            "reason": f"cannot compare commits for {branch} against {base}",
+        }
+    try:
+        ahead_count = int(ahead.stdout.strip() or "0")
+    except ValueError:
+        ahead_count = 0
+    if ahead_count <= 0:
+        return {
+            "ok": "false",
+            "failure_type": COMMAND_EXECUTION_FAILURE,
+            "reason": f"branch {branch} has no new commits; PR creation skipped",
+        }
+
+    return {"ok": "true"}
+
+
+def _auto_commit_worktree(worktree_dir: Path, task_id: str, title: str) -> str:
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=worktree_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if not status.stdout.strip():
+        return "auto-commit: no changes detected"
+
+    run_or_raise(
+        ["git", "add", "-A"],
+        cwd=worktree_dir,
+        max_retries=1,
+        base_delay_seconds=0.5,
+        max_delay_seconds=1.0,
+    )
+    message = f"feat({task_id.lower()}): {title}"[:120]
+    commit = subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=worktree_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if commit.returncode != 0:
+        return "auto-commit: skipped (commit command failed or no staged changes)"
+    return "auto-commit: created commit"
+
+
+def _load_execution_policy(project_dir: Path) -> ExecutionPolicy:
+    config_path = project_dir / ".smartworkmate" / "config.yaml"
+    if not config_path.exists():
+        return ExecutionPolicy(
+            backend="opencode_local",
+            require_worktree_isolation=True,
+            auto_commit=True,
+        )
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+
+    backend = str(data.get("execution_backend", "opencode_local")).strip().lower()
+    if backend not in {"kimaki", "opencode_local"}:
+        backend = "opencode_local"
+    return ExecutionPolicy(
+        backend=backend,
+        require_worktree_isolation=bool(data.get("require_worktree_isolation", True)),
+        auto_commit=bool(data.get("auto_commit", True)),
+    )
+
+
 def _extract_task_id_from_text(text: str) -> str:
-    match = re.search(r"(TSK-\d{4}-\d{3})", text, flags=re.IGNORECASE)
+    match = re.search(r"(TSK-\d{4}-\d{3}|AUTO-[0-9A-Fa-f]{8})", text, flags=re.IGNORECASE)
     if not match:
         return ""
     return match.group(1).upper()
