@@ -52,7 +52,7 @@ uv run python -m smartworkmate.cli start --root D:\workspace --execute --user ii
 This command automatically:
 
 - detects Kimaki/OpenCode availability
-- discovers projects from Kimaki mappings (or OpenCode session history)
+- discovers projects from OpenCode project roots first, then enriches with Kimaki channel mappings
 - refreshes `.smartworkmate/memory/project-memory.json` for each project
 - scans each project's `docs/tasks/*.md`
 - reconciles active tasks first (sync PR URL from Kimaki, then try acceptance)

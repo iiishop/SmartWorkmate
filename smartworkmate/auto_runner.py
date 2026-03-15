@@ -64,6 +64,10 @@ def start_autonomous_runner(
 def discover_projects(root: Path) -> list[ProjectTarget]:
     targets_by_dir: dict[str, ProjectTarget] = {}
 
+    for directory in _opencode_project_roots(root):
+        key = str(directory)
+        targets_by_dir[key] = ProjectTarget(directory=directory)
+
     kimaki_bin = _maybe_kimaki_bin()
     if kimaki_bin:
         kimaki_projects = _safe_json_command([kimaki_bin, "project", "list", "--json"], cwd=root)
@@ -73,11 +77,16 @@ def discover_projects(root: Path) -> list[ProjectTarget]:
                     continue
                 directory = Path(str(item.get("directory", ""))).resolve()
                 key = str(directory)
-                targets_by_dir[key] = ProjectTarget(
-                    directory=directory,
-                    channel_id=str(item.get("channel_id", "")),
-                    channel_name=str(item.get("channel_name", "")),
-                )
+                existing = targets_by_dir.get(key)
+                if existing is None:
+                    targets_by_dir[key] = ProjectTarget(
+                        directory=directory,
+                        channel_id=str(item.get("channel_id", "")),
+                        channel_name=str(item.get("channel_name", "")),
+                    )
+                else:
+                    existing.channel_id = str(item.get("channel_id", ""))
+                    existing.channel_name = str(item.get("channel_name", ""))
 
     opencode_bin = _maybe_opencode_bin()
     if opencode_bin:
@@ -137,6 +146,53 @@ def _add_if_task_project(targets: dict[str, ProjectTarget], target: ProjectTarge
         return
     if not existing.channel_id and target.channel_id:
         targets[key] = target
+
+
+def _opencode_project_roots(scope_root: Path) -> list[Path]:
+    opencode_bin = _maybe_opencode_bin()
+    if not opencode_bin:
+        return []
+
+    projects = _safe_json_command(
+        [
+            opencode_bin,
+            "db",
+            "SELECT worktree FROM project WHERE worktree IS NOT NULL AND worktree != '/' ORDER BY time_updated DESC;",
+            "--format",
+            "json",
+        ],
+        cwd=scope_root,
+    )
+    if not isinstance(projects, list):
+        return []
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    scope = scope_root.resolve()
+    for item in projects:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("worktree")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        directory = Path(raw).resolve()
+        directory_key = str(directory)
+        if directory_key in seen:
+            continue
+        if not _is_same_or_child(scope, directory):
+            continue
+        seen.add(directory_key)
+        roots.append(directory)
+
+    return roots
+
+
+def _is_same_or_child(parent: Path, child: Path) -> bool:
+    parent_str = os.path.normcase(str(parent.resolve()))
+    child_str = os.path.normcase(str(child.resolve()))
+    if parent_str == child_str:
+        return True
+    return child_str.startswith(parent_str.rstrip("\\/") + os.sep)
 
 
 def _find_tasks_dirs(root: Path, *, max_depth: int) -> list[Path]:
