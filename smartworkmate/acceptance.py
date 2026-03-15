@@ -70,6 +70,9 @@ def evaluate_task_acceptance(
     for check in task.acceptance_checks:
         command = _extract_command(check)
         if command:
+            if _is_recursive_verify_command(command, task.task_id):
+                manual_checks.append(check + " (skipped recursive verify-task command)")
+                continue
             runnable_commands.append((check, command))
         else:
             manual_checks.append(check)
@@ -160,6 +163,14 @@ def _looks_like_command(value: str) -> bool:
     if "&&" in value or "||" in value or "|" in value:
         return True
     return False
+
+
+def _is_recursive_verify_command(command: str, task_id: str) -> bool:
+    lowered = command.lower()
+    if "verify-task" not in lowered:
+        return False
+    task_token = task_id.lower()
+    return task_token in lowered
 
 
 def _clip_output(text: str, max_chars: int = 1500) -> str:

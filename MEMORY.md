@@ -23,3 +23,4 @@
 - Some Kimaki bot-initiated sessions may start with only `任务ID` content; dispatch now sends a follow-up full prompt into the created session to enforce non-interactive execution.
 - Avoid leading prompt tokens like `任务ID:` because they may trigger reminder/scheduler-style handling; use neutral `TaskRef` wording.
 - First prompt line must be self-sufficient (task id + task file to read + no-question instruction) because some bot sessions may only ingest the first line.
+- Acceptance checks must not include `verify-task` command for the same task ID; this creates recursive self-invocation and can appear as hangs.

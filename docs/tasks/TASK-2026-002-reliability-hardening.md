@@ -3,7 +3,7 @@ task_id: TSK-2026-002
 title: Reliability hardening for autonomous runner
 base_branch: main
 priority: high
-status: todo
+status: verify
 labels: [reliability, orchestration, safety]
 references:
   - ./README.md
@@ -37,6 +37,6 @@ references:
 
 - [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 能识别 `TSK-2026-002`
 - [ ] `uv run python -m smartworkmate.cli --repo-root . start --root "D:\workspace" --dry-run --once` 输出中包含可识别的可靠性控制信息（如 lock/retry/reconcile）
-- [ ] `uv run python -m smartworkmate.cli --repo-root . verify-task --task-id TSK-2026-002` 返回结构化结果且不会崩溃
+- [ ] `python -m unittest discover -s tests -p "test_*.py"` 至少覆盖 runtime_guard 相关测试并通过
 - [ ] 当同一 task 被重复触发时，状态中可观测到防重入行为（例如 skipped/locked 说明）
 - [ ] 至少补充一段 README 文档，说明可靠性策略与恢复机制
