@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from smartworkmate.runtime_guard import (
     COMMAND_EXECUTION_FAILURE,
@@ -52,6 +54,22 @@ class RuntimeGuardTests(unittest.TestCase):
 
             third = acquire_task_lock(repo, task_id="TSK-2026-002", run_id="run-c", ttl_seconds=300)
             self.assertTrue(third.acquired)
+
+    @patch("smartworkmate.runtime_guard._is_process_alive", return_value=False)
+    def test_reclaims_lock_when_owner_process_is_dead(self, _mock_alive) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            first = acquire_task_lock(repo, task_id="TSK-2026-003", run_id="run-a", ttl_seconds=300)
+            self.assertTrue(first.acquired)
+
+            lock_path = repo / ".smartworkmate" / "locks" / "TSK-2026-003.lock"
+            payload = json.loads(lock_path.read_text(encoding="utf-8"))
+            payload["pid"] = 999999
+            lock_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+            second = acquire_task_lock(repo, task_id="TSK-2026-003", run_id="run-b", ttl_seconds=300)
+            self.assertTrue(second.acquired)
+            self.assertEqual(second.status, "reclaimed")
 
     def test_retry_succeeds_after_network_failure(self) -> None:
         responses = [

@@ -52,3 +52,14 @@
 - In isolation mode, Kimaki remains as a companion notifier: one `--notify-only` thread is created per task session and local acceptance progress is posted back to that thread.
 - GUI has been further upgraded to a Chinese visual command center (tabbed layout, metrics cards, per-project chips, timeline stream, colored logs) and no longer mirrors legacy TUI composition.
 - Task parser must tolerate `references:` or `labels:` being explicitly set to null in YAML frontmatter; treat null as empty list to avoid crash during sync.
+- `verify + pr_url` now auto-transitions to `done` in reconcile; manual approval gate is disabled by default (`manual_approval_required: false`).
+- Notify thread updates should be sent line-by-line to avoid Discord/Kimaki rendering only metadata like `cliThreadPrompt: true`.
+- Stale task locks can occur when lock owner process exits early; lock reclaim now checks both expiry and owner PID liveness.
+- Web GUI log panel now appends a compact `[cycle-summary]` view per cycle to expose skipped-locked/no-commit policy events that may be truncated in raw tail logs.
+- Low-risk AUTO task template now writes concrete requirements/design/acceptance (focus file + executable smoke checks) instead of only clue dumps.
+- Repeated identical acceptance failures are tracked; after 5 same-reason retries the task is auto-demoted to `blocked` for manual intervention.
+- Local opencode execution now posts extra Kimaki thread updates at dispatch start and dispatch completion (not only acceptance result).
+- PR lifecycle tracking runs during reconcile for tasks with PR URLs: merged => done + clear pr_url + cleanup worktree; closed without actionable task-format reason => done + cleanup; closed with task-format reason => rewrite same task and reset to todo.
+- PR rejection reason is fetched from latest `CHANGES_REQUESTED` review body via `gh api` and interpreted as task-format only when it contains required task sections plus checkbox acceptance.
+- Web dashboard now includes per-project memory refresh delta summary (commits/chunks/hot-files/task-outcomes deltas) so memory growth is visible cycle-by-cycle.
+- Pre-commit hygiene before auto-commit now ensures common `.gitignore` entries and unstages disallowed artifacts (`__pycache__`, `.pyc`, `.smartworkmate`, temp/debug helper scripts) before creating commits.

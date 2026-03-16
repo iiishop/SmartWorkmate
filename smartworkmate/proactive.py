@@ -18,6 +18,14 @@ FINDING_SCAN_EXCLUDES = (
     ":(exclude)docs/tasks/auto/**",
 )
 AUTO_HRISK_LIMIT = 5
+LOW_RISK_NOISE_PATH_PARTS = (
+    "docs/tasks",
+    "__pycache__",
+    "node_modules",
+    ".smartworkmate",
+    "dist/",
+    "build/",
+)
 
 
 def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[str, Any]:
@@ -28,7 +36,14 @@ def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[st
     tasks = _collect_task_files(repo_root)
     state_summary = _collect_state_summary(repo_root)
     hot_files = _git_hot_files(repo_root, max_commits=max_commits, top_n=20)
-    chunks = _build_memory_chunks(repo_root, commits=commits, tasks=tasks, hot_files=hot_files)
+    task_outcomes = _collect_task_outcome_chunks(repo_root, max_items=40)
+    chunks = _build_memory_chunks(
+        repo_root,
+        commits=commits,
+        tasks=tasks,
+        hot_files=hot_files,
+        task_outcomes=task_outcomes,
+    )
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -38,6 +53,7 @@ def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[st
         "commits": commits,
         "tasks": tasks,
         "hot_files": hot_files,
+        "task_outcomes": task_outcomes,
         "chunks": chunks,
         "state_summary": state_summary,
     }
@@ -49,6 +65,8 @@ def refresh_project_memory(repo_root: Path, *, max_commits: int = 80) -> dict[st
         "output": str(output),
         "commit_count": len(commits),
         "task_count": len(tasks),
+        "hot_file_count": len(hot_files),
+        "task_outcome_count": len(task_outcomes),
         "chunk_count": len(chunks),
     }
 
@@ -140,6 +158,13 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         finding_lines = ["- No TODO/FIXME/HACK markers found in current scan"]
 
     base_branch = _detect_repo_base_branch(repo_root)
+    smoke_command = _build_auto_smoke_command(repo_root=repo_root, hot_files=hot_files)
+    focus_file = _pick_focus_file(repo_root=repo_root, hot_files=hot_files)
+    low_risk_outline = _build_low_risk_outline(
+        focus_file=focus_file,
+        smoke_command=smoke_command,
+        findings=findings,
+    )
 
     content = {
         "task_id": f"AUTO-{head_sha[:8]}",
@@ -159,30 +184,36 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         + (
             "基于最近提交记录和代码标记，提出高风险/大改动候选任务。该任务需要人工审阅并在最后添加 --FIN-- 后才会执行。\n\n"
             if risk == "high"
-            else "基于最近提交记录和代码标记，挑选 1-2 个低风险改进点，形成一个清晰可审阅的 PR。\n\n"
+            else low_risk_outline["requirements"]
         )
-        + "近期提交摘要:\n"
-        + ("\n".join(summary_lines) if summary_lines else "- (no recent commits)")
-        + "\n\n"
-        + "代码标记线索:\n"
-        + "\n".join(finding_lines)
-        + "\n\n"
-        + "高频改动文件:\n"
-        + ("\n".join(f"- {item['path']} ({item['touches']} touches)" for item in hot_files) if hot_files else "- (none)")
-        + "\n\n"
+        + (
+            "近期提交摘要:\n"
+            + ("\n".join(summary_lines) if summary_lines else "- (no recent commits)")
+            + "\n\n"
+            + "代码标记线索:\n"
+            + "\n".join(finding_lines)
+            + "\n\n"
+            + "高频改动文件:\n"
+            + ("\n".join(f"- {item['path']} ({item['touches']} touches)" for item in hot_files) if hot_files else "- (none)")
+            + "\n\n"
+            if risk == "high"
+            else ""
+        )
         + "## 任务设计\n\n"
         + (
             "先做影响面分析和回滚方案，再拆分为可审核的子改动。建议只在人工确认后推进。"
             if risk == "high"
-            else "先聚焦可快速验证的小改动（重构、注释修正、轻量 bugfix、测试补全）。"
+            else low_risk_outline["design"]
         )
-        + "实现时保持多次 commit，PR 描述中明确 why 和风险。\n\n"
+        + "\n\n"
         + "## 交付验收\n\n"
-        + "- [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可正常执行\n"
-        + "- [ ] `uv run python -m smartworkmate.cli --repo-root . verify-task --task-id AUTO-"
-        + head_sha[:8]
-        + "` 返回结构化结果\n"
-        + "- [ ] PR 描述清楚列出改进点、风险和回滚策略\n"
+        + (
+            "- [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可正常执行\n"
+            + f"- [ ] `{smoke_command}` 可正常执行\n"
+            + "- [ ] PR 描述清楚列出改进点、风险和回滚策略\n"
+            if risk == "high"
+            else low_risk_outline["acceptance"]
+        )
         + ("\n--FIN--\n" if risk == "low" else "")
     )
 
@@ -225,6 +256,104 @@ def _detect_repo_base_branch(repo_root: Path) -> str:
     if branch:
         return branch
     return "main"
+
+
+def _build_auto_smoke_command(*, repo_root: Path, hot_files: list[dict[str, Any]]) -> str:
+    for item in hot_files:
+        path = str(item.get("path", "")).strip()
+        if not path.endswith(".py"):
+            continue
+        target = repo_root / path
+        if target.exists() and target.is_file():
+            return f'uv run python -m py_compile "{path}"'
+
+    for path in sorted(repo_root.rglob("*.py")):
+        text = str(path)
+        if any(skip in text for skip in (".venv", "node_modules", ".smartworkmate", "__pycache__")):
+            continue
+        try:
+            rel = path.relative_to(repo_root).as_posix()
+        except Exception:
+            continue
+        return f'uv run python -m py_compile "{rel}"'
+
+    return "git status --short"
+
+
+def _pick_focus_file(*, repo_root: Path, hot_files: list[dict[str, Any]]) -> str:
+    for item in hot_files:
+        raw = str(item.get("path", "")).strip().replace("\\", "/")
+        if not raw or _is_noise_path(raw):
+            continue
+        target = repo_root / raw
+        if not target.exists() or not target.is_file():
+            continue
+        if raw.endswith((".py", ".qml", ".md", ".json", ".toml")):
+            return raw
+    return "main.py"
+
+
+def _is_noise_path(path: str) -> bool:
+    lowered = path.lower()
+    return any(part in lowered for part in LOW_RISK_NOISE_PATH_PARTS)
+
+
+def _build_low_risk_outline(*, focus_file: str, smoke_command: str, findings: list[str]) -> dict[str, str]:
+    focus = focus_file.replace("\\", "/")
+    candidate_issue = _extract_focus_finding(focus, findings)
+
+    if focus.endswith(".py"):
+        change_items = [
+            f"在 `{focus}` 做一次小范围可审阅改进（不改变对外行为）。",
+            "优先处理可确定的质量问题：冗余分支/无效语句/异常信息不清晰/重复逻辑片段。",
+        ]
+    elif focus.endswith(".qml"):
+        change_items = [
+            f"在 `{focus}` 做一次小范围 UI 结构或可维护性改进。",
+            "保持视觉表现和交互语义不回退，减少重复或不一致写法。",
+        ]
+    else:
+        change_items = [
+            f"围绕 `{focus}` 做一次低风险、可回滚的小改动。",
+            "改动必须是可验证的工程质量提升，而不是仅补充描述文字。",
+        ]
+
+    if candidate_issue:
+        change_items.append(f"结合已发现线索处理该问题：`{candidate_issue}`。")
+
+    requirements = "\n".join(["- " + item for item in change_items]) + "\n"
+
+    design = (
+        f"1. 先定位 `{focus}` 中最小可落地改动点，并限定影响范围。\n"
+        "2. 在同一文件内完成修改，必要时补一处最小回归检查。\n"
+        "3. 提交前确认改动可解释（why）且可回滚。\n"
+        "4. 产生至少 1 次有效代码提交。"
+    )
+
+    acceptance = (
+        f"- [ ] `git diff -- \"{focus}\"` 显示存在有效代码改动\n"
+        f"- [ ] `{smoke_command}` 可正常执行\n"
+        "- [ ] `uv run python -m smartworkmate.cli --repo-root . scan` 可正常执行\n"
+        "- [ ] PR 描述包含改动原因（why）、风险和回滚方式\n"
+    )
+
+    return {
+        "requirements": requirements,
+        "design": design,
+        "acceptance": acceptance,
+    }
+
+
+def _extract_focus_finding(focus_file: str, findings: list[str]) -> str:
+    needle = focus_file.replace("\\", "/").lower()
+    for item in findings:
+        line = str(item).strip()
+        if not line:
+            continue
+        lowered = line.replace("\\", "/").lower()
+        if needle in lowered:
+            return line
+    return ""
 
 
 def _classify_risk(*, commits: list[dict[str, str]], findings: list[str]) -> str:
@@ -440,6 +569,7 @@ def _build_memory_chunks(
     commits: list[dict[str, str]],
     tasks: list[str],
     hot_files: list[dict[str, Any]],
+    task_outcomes: list[dict[str, str]],
 ) -> list[dict[str, str]]:
     chunks: list[dict[str, str]] = []
 
@@ -470,6 +600,15 @@ def _build_memory_chunks(
             }
         )
 
+    for item in task_outcomes:
+        chunks.append(
+            {
+                "kind": "task_outcome",
+                "id": item.get("task_id", ""),
+                "text": item.get("text", ""),
+            }
+        )
+
     readme = repo_root / "README.md"
     if readme.exists():
         text = readme.read_text(encoding="utf-8", errors="replace")
@@ -487,6 +626,43 @@ def _build_memory_chunks(
                 )
 
     return chunks
+
+
+def _collect_task_outcome_chunks(repo_root: Path, *, max_items: int) -> list[dict[str, str]]:
+    state_path = repo_root / ".smartworkmate" / "state.json"
+    if not state_path.exists():
+        return []
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    tasks = data.get("tasks", {})
+    if not isinstance(tasks, dict):
+        return []
+
+    entries: list[tuple[str, dict[str, Any]]] = []
+    for task_id, raw in tasks.items():
+        if not isinstance(raw, dict):
+            continue
+        updated = str(raw.get("updated_at", ""))
+        entries.append((updated, {"task_id": str(task_id), **raw}))
+    entries.sort(key=lambda item: item[0], reverse=True)
+
+    out: list[dict[str, str]] = []
+    for _updated, item in entries[: max(1, max_items)]:
+        task_id = str(item.get("task_id", ""))
+        status = str(item.get("status", ""))
+        notes = str(item.get("notes", "")).strip()
+        failure = str(item.get("failure_detail", "")).strip()
+        if not notes and not failure:
+            continue
+        text = f"{task_id} status={status}"
+        if notes:
+            text += f" notes={notes[:220]}"
+        if failure:
+            text += f" failure={failure[:220]}"
+        out.append({"task_id": task_id, "text": text})
+    return out
 
 
 def _tokenize(text: str) -> set[str]:

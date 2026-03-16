@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from smartworkmate.proactive import (
     FINDING_SCAN_EXCLUDES,
+    _build_auto_smoke_command,
+    _build_low_risk_outline,
     _detect_repo_base_branch,
+    _pick_focus_file,
     _git_code_findings,
 )
 
@@ -111,6 +115,59 @@ class ProactiveBaseBranchTests(unittest.TestCase):
             branch = _detect_repo_base_branch(Path("."))
 
         self.assertEqual(branch, "main")
+
+
+class ProactiveSmokeCommandTests(unittest.TestCase):
+    def test_prefers_hot_python_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            target = repo / "main.py"
+            target.write_text("print('ok')\n", encoding="utf-8")
+
+            command = _build_auto_smoke_command(
+                repo_root=repo,
+                hot_files=[{"path": "main.py", "touches": 3}],
+            )
+
+        self.assertIn("py_compile", command)
+        self.assertIn("main.py", command)
+
+    def test_falls_back_to_git_status_when_no_python_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            command = _build_auto_smoke_command(repo_root=repo, hot_files=[])
+
+        self.assertEqual(command, "git status --short")
+
+
+class ProactiveTaskOutlineTests(unittest.TestCase):
+    def test_pick_focus_file_skips_noise_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "main.py").write_text("print('x')\n", encoding="utf-8")
+            (repo / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
+            (repo / "docs" / "tasks" / "TSK-01.md").write_text("x\n", encoding="utf-8")
+
+            focus = _pick_focus_file(
+                repo_root=repo,
+                hot_files=[
+                    {"path": "docs/tasks/TSK-01.md", "touches": 10},
+                    {"path": "main.py", "touches": 3},
+                ],
+            )
+
+        self.assertEqual(focus, "main.py")
+
+    def test_low_risk_outline_uses_concrete_acceptance_commands(self) -> None:
+        outline = _build_low_risk_outline(
+            focus_file="main.py",
+            smoke_command="uv run python -m py_compile \"main.py\"",
+            findings=[],
+        )
+        acceptance = outline["acceptance"]
+        self.assertIn("git diff -- \"main.py\"", acceptance)
+        self.assertIn("py_compile", acceptance)
+        self.assertNotIn("verify-task --task-id", acceptance)
 
 
 if __name__ == "__main__":

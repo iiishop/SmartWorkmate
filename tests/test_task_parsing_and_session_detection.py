@@ -7,14 +7,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 from smartworkmate.auto_runner import (
+    AUTO_RETRY_BLOCK_THRESHOLD,
     _canonical_project_dir,
+    _build_auto_retry_tracker_detail,
     _extract_thread_id_from_text,
     _extract_task_id_from_text,
+    _next_auto_retry_count,
+    _normalize_retry_reason,
+    _is_task_format_reason,
+    _parse_auto_retry_tracker_detail,
+    _post_notify_thread_update,
     _maybe_gh_bin,
+    _is_no_new_commits_pr_skip,
     _missing_pr_body_sections,
     _format_acceptance_notify,
+    _resolve_no_commit_pr_note,
+    _resolve_no_commit_pr_status,
     _should_use_kimaki_backend,
 )
+from smartworkmate.models import TaskStatus
 from smartworkmate.orchestrator import _detect_latest_kimaki_session
 from smartworkmate.task_loader import load_task_file
 
@@ -249,6 +260,75 @@ class LocalNotifyHelpersTests(unittest.TestCase):
         self.assertIn("TSK-2026-001", message)
         self.assertIn("verify", message)
         self.assertIn("runnable checks: 2", message)
+
+    @patch("smartworkmate.auto_runner._resolve_kimaki_bin", return_value="kimaki")
+    @patch("smartworkmate.auto_runner.subprocess.run")
+    def test_post_notify_thread_update_sends_each_non_empty_line(self, mock_run, _mock_bin) -> None:
+        _post_notify_thread_update(
+            project_dir=Path("."),
+            thread_id="123",
+            message="line1\n\nline2\nline3",
+        )
+
+        self.assertEqual(mock_run.call_count, 3)
+        sent_prompts = [call.args[0][5] for call in mock_run.call_args_list]
+        self.assertEqual(sent_prompts, ["line1", "line2", "line3"])
+
+
+class NoCommitPrPolicyTests(unittest.TestCase):
+    def test_detects_no_commit_pr_skip_reason(self) -> None:
+        reason = "branch task/abc has no new commits; PR creation skipped"
+        self.assertTrue(_is_no_new_commits_pr_skip(reason))
+
+    def test_verify_task_resolves_to_done_without_pr(self) -> None:
+        resolved = _resolve_no_commit_pr_status(TaskStatus.VERIFY.value)
+        note = _resolve_no_commit_pr_note(resolved)
+        self.assertEqual(resolved, TaskStatus.DONE.value)
+        self.assertIn("done without PR", note)
+
+    def test_non_verify_task_resolves_to_rework(self) -> None:
+        resolved = _resolve_no_commit_pr_status(TaskStatus.IN_PROGRESS.value)
+        note = _resolve_no_commit_pr_note(resolved)
+        self.assertEqual(resolved, TaskStatus.REWORK.value)
+        self.assertIn("rework required", note)
+
+
+class AutoRetryTrackerTests(unittest.TestCase):
+    def test_normalize_retry_reason(self) -> None:
+        self.assertEqual(_normalize_retry_reason("  Foo\n Bar  "), "foo bar")
+
+    def test_parse_and_build_retry_tracker_detail(self) -> None:
+        detail = _build_auto_retry_tracker_detail(reason="same failure", count=2)
+        parsed = _parse_auto_retry_tracker_detail(detail)
+        self.assertEqual(parsed.get("reason"), "same failure")
+        self.assertEqual(parsed.get("count"), 2)
+
+    def test_retry_count_increments_for_same_reason(self) -> None:
+        previous = _build_auto_retry_tracker_detail(reason="build failed", count=3)
+        next_count = _next_auto_retry_count(previous_failure_detail=previous, reason="build failed")
+        self.assertEqual(next_count, 4)
+
+    def test_retry_count_resets_for_different_reason(self) -> None:
+        previous = _build_auto_retry_tracker_detail(reason="build failed", count=3)
+        next_count = _next_auto_retry_count(previous_failure_detail=previous, reason="permission denied")
+        self.assertEqual(next_count, 1)
+
+    def test_threshold_constant_is_five(self) -> None:
+        self.assertEqual(AUTO_RETRY_BLOCK_THRESHOLD, 5)
+
+
+class PrReasonFormatTests(unittest.TestCase):
+    def test_task_format_reason_detected(self) -> None:
+        reason = (
+            "## 任务需求\n\n- 需求\n\n"
+            "## 任务设计\n\n1. 设计\n\n"
+            "## 交付验收\n\n- [ ] 验收项\n"
+        )
+        self.assertTrue(_is_task_format_reason(reason))
+
+    def test_non_task_reason_rejected(self) -> None:
+        reason = "Please improve tests and readability"
+        self.assertFalse(_is_task_format_reason(reason))
 
 
 if __name__ == "__main__":

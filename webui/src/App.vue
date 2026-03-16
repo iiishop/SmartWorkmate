@@ -21,6 +21,7 @@ const state = reactive({
   next_run_in: 0,
   last_updated: '',
   last_error: '',
+  current_step: 'idle',
   stats: { dispatch: 0, active: 0, auto: 0, pr: 0, error: 0, git_sync: 0 },
   dispatch: [],
   active: [],
@@ -32,11 +33,14 @@ const state = reactive({
   errors: [],
   policies: [],
   projects: {},
+  tasks: [],
+  memory_deltas: [],
   history: [],
   logs: [],
 })
 
-const selectedFlowNode = ref('dispatch')
+const selectedFlowNode = ref('idle')
+const selectedTaskKey = ref('')
 const syncTimer = ref(null)
 
 const metrics = computed(() => [
@@ -47,54 +51,123 @@ const metrics = computed(() => [
   { key: 'error', label: '异常阻塞', accent: 'crimson', value: state.stats.error, note: '需要优先处理' },
 ])
 
+const cycleSteps = [
+  'idle', 'discover', 'sync_state', 'memory_refresh',
+  'reconcile', 'lock_task', 'dispatch', 'acceptance',
+  'pr_open', 'idle_task', 'wait_active', 'error',
+]
+
+// Infer current step from live state data
+const inferredStep = computed(() => {
+  if (!state.running) return 'idle'
+  const s = state.current_step || 'idle'
+  // map backend step names to our cycle node IDs
+  if (s === 'discover') return 'discover'
+  if (s === 'running') {
+    // guess from last cycle stats what we're likely doing
+    if (state.stats.active > 0) return 'wait_active'
+    if (state.stats.dispatch > 0) return 'dispatch'
+    return 'sync_state'
+  }
+  if (s === 'apply') return 'acceptance'
+  return 'idle'
+})
+
 const flowNodes = computed(() => {
-  const selected = selectedFlowNode.value
-  const node = (id, x, y, label, tone, width = 176) => ({
+  const active = inferredStep.value
+  const node = (id, x, y, label, tone, width = 148) => ({
     id,
     position: { x, y },
     data: { label },
-    class: `flow-node ${tone}${selected === id ? ' is-selected' : ''}`,
+    class: `flow-node ${tone}${active === id ? ' is-active' : ''}${selectedFlowNode.value === id ? ' is-selected' : ''}`,
     style: { width: `${width}px` },
   })
+
+  // Layout: two rows
+  // Row 1 (main happy path): idle → discover → sync_state → memory_refresh → reconcile → lock_task → dispatch → acceptance → pr_open
+  // Row 2 (branches):  wait_active (under reconcile), idle_task (under lock_task), error (under acceptance)
   return [
-    node('scan', 20, 86, `扫描项目\nactive=${state.stats.active}`, 'steel', 164),
-    node('sync', 196, 86, `Git 同步\nsync=${state.stats.git_sync || 0}`, 'teal', 168),
-    node('dispatch', 388, 86, `派发执行\ndispatch=${state.stats.dispatch}`, 'cobalt', 174),
-    node('auto', 588, 30, `自动任务\nauto=${state.stats.auto}`, 'amber', 156),
-    node('pr', 588, 144, `PR 生命周期\npr=${state.stats.pr}`, 'violet', 164),
-    node('err', 778, 86, `异常\nerror=${state.stats.error}`, 'crimson', 148),
+    node('idle',           20,  20, `IDLE\n等待下一轮`, 'steel', 130),
+    node('discover',      170,  20, `DISCOVER\n发现项目`, 'teal', 142),
+    node('sync_state',    332,  20, `SYNC STATE\n同步任务文件`, 'teal', 148),
+    node('memory_refresh',500,  20, `MEMORY\n刷新项目记忆`, 'cobalt', 152),
+    node('reconcile',     672,  20, `RECONCILE\n处理活跃任务`, 'violet', 158),
+    node('lock_task',     854,  20, `LOCK & SELECT\n选取下一个任务`, 'cobalt', 162),
+    node('dispatch',     1040,  20, `DISPATCH\n执行任务`, 'cobalt', 138),
+    node('acceptance',   1200,  20, `ACCEPTANCE\n验收结果`, 'amber', 148),
+    node('pr_open',      1368,  20, `PR OPEN\n推送 PR`, 'violet', 130),
+    // branch nodes
+    node('wait_active',   672, 120, `WAIT ACTIVE\n有任务处理中`, 'steel', 152),
+    node('idle_task',     854, 120, `IDLE TASK\n无任务→自动生成`, 'amber', 160),
+    node('error',        1200, 120, `ERROR\n验收失败/阻塞`, 'crimson', 140),
   ]
 })
 
-const flowEdges = computed(() => [
-  { id: 'e-scan-sync', source: 'scan', target: 'sync', animated: true },
-  { id: 'e-sync-dispatch', source: 'sync', target: 'dispatch', animated: true },
-  { id: 'e-dispatch-auto', source: 'dispatch', target: 'auto', animated: true },
-  { id: 'e-dispatch-pr', source: 'dispatch', target: 'pr', animated: true },
-  { id: 'e-auto-err', source: 'auto', target: 'err' },
-  { id: 'e-pr-err', source: 'pr', target: 'err' },
-])
+const flowEdges = computed(() => {
+  const animated = (id, src, tgt, label = '') => ({
+    id, source: src, target: tgt, animated: true,
+    label: label || undefined,
+    labelStyle: { fontSize: '10px', fill: '#64748b' },
+  })
+  const plain = (id, src, tgt, label = '') => ({
+    id, source: src, target: tgt, animated: false,
+    label: label || undefined,
+    labelStyle: { fontSize: '10px', fill: '#64748b' },
+  })
+  return [
+    animated('e1', 'idle', 'discover'),
+    animated('e2', 'discover', 'sync_state'),
+    animated('e3', 'sync_state', 'memory_refresh'),
+    animated('e4', 'memory_refresh', 'reconcile'),
+    // reconcile branches
+    animated('e5a', 'reconcile', 'lock_task', '无活跃'),
+    plain('e5b', 'reconcile', 'wait_active', '有活跃'),
+    plain('e5c', 'wait_active', 'idle', '继续等'),
+    // lock_task branches
+    animated('e6a', 'lock_task', 'dispatch', '有任务'),
+    plain('e6b', 'lock_task', 'idle_task', '无任务'),
+    plain('e6c', 'idle_task', 'idle', '生成草稿'),
+    // dispatch → acceptance → pr / error
+    animated('e7', 'dispatch', 'acceptance'),
+    animated('e8a', 'acceptance', 'pr_open', '通过'),
+    plain('e8b', 'acceptance', 'error', '失败'),
+    plain('e9a', 'pr_open', 'idle', '完成'),
+    plain('e9b', 'error', 'idle', 'blocked/rework'),
+  ]
+})
 
 const flowDetailTitle = computed(() => {
   const titleMap = {
-    scan: '扫描项目',
-    sync: 'Git 同步',
+    idle: '等待中',
+    discover: '发现项目',
+    sync_state: '同步任务文件',
+    memory_refresh: '刷新项目记忆',
+    reconcile: '处理活跃任务',
+    lock_task: '选取下一个任务',
     dispatch: '派发执行',
-    auto: '自动任务',
-    pr: 'PR 生命周期',
-    err: '异常阻塞',
+    acceptance: '验收结果',
+    pr_open: 'PR 推送',
+    wait_active: '有任务处理中',
+    idle_task: '自动生成草稿任务',
+    error: '验收失败 / 阻塞',
   }
   return titleMap[selectedFlowNode.value] || '节点详情'
 })
 
 const flowDetailItems = computed(() => {
   const sourceMap = {
-    scan: state.active,
-    sync: state.git_sync,
+    idle: [],
+    discover: state.active,
+    sync_state: state.active,
+    memory_refresh: state.memory_deltas,
+    reconcile: state.active,
+    lock_task: state.active,
     dispatch: state.dispatch,
-    auto: state.auto,
-    pr: [...state.pr, ...state.pr_tracking],
-    err: state.errors,
+    acceptance: state.dispatch,
+    pr_open: [...state.pr, ...state.pr_tracking],
+    wait_active: state.active,
+    idle_task: state.auto,
+    error: state.errors,
   }
   return (sourceMap[selectedFlowNode.value] || []).map((text) => ({
     text,
@@ -103,6 +176,59 @@ const flowDetailItems = computed(() => {
 })
 
 const projectEntries = computed(() => Object.entries(state.projects || {}))
+
+const taskEntries = computed(() => state.tasks || [])
+
+const selectedTask = computed(() => {
+  if (!taskEntries.value.length) return null
+  if (!selectedTaskKey.value) {
+    selectedTaskKey.value = taskEntries.value[0].key
+  }
+  return taskEntries.value.find((item) => item.key === selectedTaskKey.value) || taskEntries.value[0]
+})
+
+const statusOrder = ['todo', 'in_progress', 'verify', 'pr_open', 'done', 'rework', 'blocked']
+const statusLabel = {
+  todo: 'TODO',
+  in_progress: 'IN_PROGRESS',
+  verify: 'VERIFY',
+  pr_open: 'PR_OPEN',
+  done: 'DONE',
+  rework: 'REWORK',
+  blocked: 'BLOCKED',
+}
+
+const taskFlowNodes = computed(() => {
+  const task = selectedTask.value
+  const observed = task?.flow || []
+  const current = task?.status || ''
+  return statusOrder.map((status, index) => {
+    const visited = observed.includes(status)
+    const active = current === status
+    return {
+      id: `task-${status}`,
+      position: { x: 30 + index * 150, y: 72 },
+      data: { label: `${statusLabel[status]}${active ? '\n(当前)' : ''}` },
+      class: `task-flow-node${visited ? ' visited' : ''}${active ? ' active' : ''}`,
+      style: { width: '138px' },
+    }
+  })
+})
+
+const taskFlowEdges = computed(() => {
+  const task = selectedTask.value
+  const observed = Array.isArray(task?.flow) ? task.flow : []
+  const edges = []
+  for (let index = 1; index < observed.length; index += 1) {
+    edges.push({
+      id: `task-edge-${index}`,
+      source: `task-${observed[index - 1]}`,
+      target: `task-${observed[index]}`,
+      animated: true,
+    })
+  }
+  return edges
+})
 
 const strategicStatus = computed(() => {
   if (state.running) {
@@ -297,6 +423,52 @@ onBeforeUnmount(() => {
         </section>
       </section>
 
+      <section class="panel-glass task-flow-panel">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-kicker">Task State Machine</p>
+            <h2>任务状态变换（按任务）</h2>
+          </div>
+        </div>
+
+        <div class="task-flow-controls" v-if="taskEntries.length">
+          <label class="field">
+            <span>任务选择</span>
+            <select v-model="selectedTaskKey">
+              <option v-for="task in taskEntries" :key="task.key" :value="task.key">
+                {{ task.project }} / {{ task.task_id }} / {{ task.status }}
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <div v-if="selectedTask" class="task-flow-meta">
+          <p><strong>Task:</strong> {{ selectedTask.task_id }} ({{ selectedTask.project }})</p>
+          <p><strong>当前状态:</strong> {{ selectedTask.status }}</p>
+          <p><strong>最近更新:</strong> {{ selectedTask.updated_at || '-' }}</p>
+          <p><strong>Notes:</strong> {{ selectedTask.notes || '-' }}</p>
+          <p v-if="selectedTask.failure_detail"><strong>失败详情:</strong> {{ selectedTask.failure_detail }}</p>
+          <p v-if="selectedTask.status === 'blocked' || selectedTask.manual_suggestion" class="manual-suggestion">
+            <strong>人工干预建议:</strong> {{ selectedTask.manual_suggestion || '查看失败详情后修复并重试。' }}
+          </p>
+        </div>
+
+        <VueFlow
+          v-if="selectedTask"
+          class="task-flow-canvas"
+          :nodes="taskFlowNodes"
+          :edges="taskFlowEdges"
+          :fit-view-on-init="true"
+          :nodes-draggable="false"
+          :elements-selectable="false"
+          :zoom-on-scroll="false"
+          :zoom-on-double-click="false"
+          :prevent-scrolling="false"
+        />
+
+        <p v-else class="empty-state">暂无任务状态数据。</p>
+      </section>
+
       <section class="intel-grid">
         <article class="panel-glass intel-panel">
           <div class="section-heading compact"><div><p class="section-kicker">Git Sync</p><h2>同步结果</h2></div></div>
@@ -337,6 +509,11 @@ onBeforeUnmount(() => {
         <article class="panel-glass intel-panel danger-panel">
           <div class="section-heading compact"><div><p class="section-kicker">Exception</p><h2>异常与阻塞</h2></div></div>
           <ul><li v-for="item in state.errors" :key="item" class="error-item">{{ item }}</li><li v-if="!state.errors.length" class="empty-state">无</li></ul>
+        </article>
+
+        <article class="panel-glass intel-panel">
+          <div class="section-heading compact"><div><p class="section-kicker">Memory Delta</p><h2>记忆增量</h2></div></div>
+          <ul><li v-for="item in state.memory_deltas" :key="item">{{ item }}</li><li v-if="!state.memory_deltas.length" class="empty-state">无</li></ul>
         </article>
 
         <article class="panel-glass intel-panel">

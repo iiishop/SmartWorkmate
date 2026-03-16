@@ -3,7 +3,7 @@ user: "iiishop"
 project_directory: "D:\\workspace\\projects\\SmartWorkmate"
 default_session_id: ""
 default_thread_id: ""
-manual_approval_required: true
+manual_approval_required: false
 execution_backend: "auto"
 require_worktree_isolation: true
 auto_commit: true

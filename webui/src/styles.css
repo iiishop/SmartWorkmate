@@ -230,6 +230,20 @@ a { color: inherit; }
 .vue-flow__node.flow-node.violet { border-left: 4px solid #d3b7ef; }
 .vue-flow__node.flow-node.crimson { border-left: 4px solid #eca5bb; }
 
+.vue-flow__node.flow-node.is-active {
+  box-shadow: 0 0 0 2px #83bfff, 0 4px 18px rgba(131, 194, 255, 0.45);
+  border-color: #83bfff;
+  background: #eef7ff;
+  color: #2d5080;
+}
+
+.vue-flow__node.flow-node.is-selected {
+  box-shadow: 0 0 0 2px #f2cb69, 0 4px 14px rgba(242, 203, 105, 0.35);
+  border-color: #f2cb69;
+  background: #fffbee;
+  color: #5a4010;
+}
+
 .detail-list, .project-grid, .project-chip-row, .detail-links { display: grid; gap: 12px; }
 .detail-card, .project-card {
   border-radius: var(--radius-lg);
@@ -281,6 +295,58 @@ a { color: inherit; }
   line-height: 1.6;
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.task-flow-panel {
+  margin-top: 18px;
+  padding: 22px;
+  border-radius: var(--radius-xl);
+}
+
+.task-flow-controls {
+  margin-bottom: 10px;
+  max-width: 520px;
+}
+
+.task-flow-meta {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: #61739a;
+  font-size: 13px;
+}
+
+.manual-suggestion {
+  color: #9a4f67;
+}
+
+.task-flow-canvas {
+  height: 220px;
+  min-height: 220px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #fcfdff, #f3f7ff);
+  box-shadow: inset 4px 4px 9px #dbe3f5, inset -4px -4px 9px #ffffff;
+}
+
+.vue-flow__node.task-flow-node {
+  border-radius: 14px;
+  border: 1px solid #dfe6f7;
+  background: #f6f9ff;
+  color: #7083ab;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-line;
+}
+
+.vue-flow__node.task-flow-node.visited {
+  border-left: 4px solid #8fc2f0;
+  color: #5271a3;
+}
+
+.vue-flow__node.task-flow-node.active {
+  border-left: 4px solid #f2bf63;
+  color: #805f1e;
 }
 
 @media (max-width: 1200px) {

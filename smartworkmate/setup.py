@@ -39,10 +39,10 @@ def setup_auto(repo_root: Path, *, force: bool = False) -> SetupReport:
         "project_directory": str(repo_root),
         "detected_at": datetime.now(timezone.utc).isoformat(),
         "detected_via": "smartworkmate setup --auto",
-        "execution_backend": "opencode_local",
+        "execution_backend": "auto",
         "require_worktree_isolation": True,
         "auto_commit": True,
-        "manual_approval_required": True,
+        "manual_approval_required": False,
     }
     if detected.get("default_session_id"):
         config["default_session_id"] = detected["default_session_id"]

@@ -234,7 +234,19 @@ def acquire_task_lock(
             )
         except FileExistsError:
             existing = _read_lock_payload(lock_path)
+            should_reclaim = False
             if existing and _is_lock_expired(existing.get("expires_at", "")):
+                should_reclaim = True
+            if existing and not should_reclaim:
+                pid_raw = existing.get("pid")
+                try:
+                    pid = int(pid_raw)
+                except (TypeError, ValueError):
+                    pid = 0
+                if pid > 0 and not _is_process_alive(pid):
+                    should_reclaim = True
+
+            if should_reclaim:
                 try:
                     lock_path.unlink()
                     continue
@@ -289,3 +301,15 @@ def _is_lock_expired(expires_at: str) -> bool:
     if expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) >= expiry
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False

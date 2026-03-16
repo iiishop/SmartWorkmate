@@ -26,7 +26,7 @@ from .orchestrator import (
     write_run_context,
 )
 from .state_store import StateStore, TaskRecord
-from .status_sync import sync_state_and_tasks
+from .status_sync import sync_state_and_tasks, sync_state_and_tasks_with_options
 from .task_loader import TaskFormatError, load_task_file, load_tasks
 import yaml
 from .proactive import create_idle_improvement_task, refresh_project_memory
@@ -44,6 +44,7 @@ from .runtime_guard import (
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DISCORD_THREAD_URL_RE = re.compile(r"https://discord\.com/channels/\d+/(\d+)")
+PR_URL_RE = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 LIVE_HISTORY_LIMIT = 80
 _LIVE_HISTORY: deque[str] = deque(maxlen=LIVE_HISTORY_LIMIT)
 REQUIRED_PR_BODY_SECTIONS = (
@@ -52,6 +53,8 @@ REQUIRED_PR_BODY_SECTIONS = (
     "## Concerns / Unfinished Items",
     "## Reviewer Notes",
 )
+AUTO_RETRY_TRACKER_PREFIX = "auto_retry_tracker::"
+AUTO_RETRY_BLOCK_THRESHOLD = 5
 
 
 def _clip_text(value: str, *, max_chars: int = 800) -> str:
@@ -105,7 +108,9 @@ def start_autonomous_runner(
         while True:
             cycle_index += 1
             targets = discover_projects(root, opencode_global=opencode_global)
-            cycle_result = _run_single_cycle(targets=targets, execute=execute, user=user)
+            cycle_result = _run_single_cycle(
+                targets=targets, execute=execute, user=user
+            )
             summaries.append(cycle_result)
             if live_status:
                 _render_live_status(
@@ -146,7 +151,9 @@ def start_autonomous_runner(
     }
 
 
-def discover_projects(root: Path, *, opencode_global: bool = False) -> list[ProjectTarget]:
+def discover_projects(
+    root: Path, *, opencode_global: bool = False
+) -> list[ProjectTarget]:
     targets_by_dir: dict[str, ProjectTarget] = {}
 
     opencode_roots = _opencode_project_roots(root, scoped=not opencode_global)
@@ -157,7 +164,9 @@ def discover_projects(root: Path, *, opencode_global: bool = False) -> list[Proj
 
     kimaki_bin = _maybe_kimaki_bin()
     if kimaki_bin:
-        kimaki_projects = _safe_json_command([kimaki_bin, "project", "list", "--json"], cwd=root)
+        kimaki_projects = _safe_json_command(
+            [kimaki_bin, "project", "list", "--json"], cwd=root
+        )
         if isinstance(kimaki_projects, list):
             for item in kimaki_projects:
                 if not isinstance(item, dict):
@@ -205,7 +214,9 @@ def discover_projects(root: Path, *, opencode_global: bool = False) -> list[Proj
                 continue
             tasks_dir = child / "docs" / "tasks"
             if tasks_dir.exists():
-                targets_by_dir[str(child.resolve())] = ProjectTarget(directory=child.resolve())
+                targets_by_dir[str(child.resolve())] = ProjectTarget(
+                    directory=child.resolve()
+                )
 
     expanded: dict[str, ProjectTarget] = {}
     for target in targets_by_dir.values():
@@ -229,7 +240,9 @@ def discover_projects(root: Path, *, opencode_global: bool = False) -> list[Proj
     return list(expanded.values())
 
 
-def _add_if_task_project(targets: dict[str, ProjectTarget], target: ProjectTarget) -> None:
+def _add_if_task_project(
+    targets: dict[str, ProjectTarget], target: ProjectTarget
+) -> None:
     if not (target.directory / "docs" / "tasks").exists():
         return
     key = str(target.directory)
@@ -356,7 +369,9 @@ def _find_tasks_dirs(root: Path, *, max_depth: int) -> list[Path]:
     return found
 
 
-def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str) -> dict[str, Any]:
+def _run_single_cycle(
+    *, targets: list[ProjectTarget], execute: bool, user: str
+) -> dict[str, Any]:
     processed: list[dict[str, Any]] = []
 
     for target in targets:
@@ -366,19 +381,28 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
             continue
         policy = _load_execution_policy(project_dir)
 
+        git_sync_result = _git_fetch_and_pull(project_dir)
+        processed.append(
+            {
+                "project": str(project_dir),
+                "mode": "git_sync",
+                "result": git_sync_result,
+            }
+        )
+
         sync_result = sync_state_and_tasks(project_dir)
         processed.append(
-                {
-                    "project": str(project_dir),
-                    "mode": "state_markdown_sync",
-                    "result": sync_result,
-                    "policy": {
-                        "backend": policy.backend,
-                        "require_worktree_isolation": policy.require_worktree_isolation,
-                        "auto_commit": policy.auto_commit,
-                    },
-                }
-            )
+            {
+                "project": str(project_dir),
+                "mode": "state_markdown_sync",
+                "result": sync_result,
+                "policy": {
+                    "backend": policy.backend,
+                    "require_worktree_isolation": policy.require_worktree_isolation,
+                    "auto_commit": policy.auto_commit,
+                },
+            }
+        )
 
         memory_result = refresh_project_memory(project_dir)
         processed.append(
@@ -516,6 +540,9 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
             failure_detail="",
         )
         state_store.save(state)
+        sync_state_and_tasks_with_options(
+            project_dir, force_state_task_ids={task.task_id}
+        )
 
         try:
             use_kimaki_backend = _should_use_kimaki_backend(
@@ -536,7 +563,9 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                 session_id = ""
                 thread_id = ""
                 if execute:
-                    session_id, thread_id = _detect_latest_kimaki_session(project_dir, task.task_id)
+                    session_id, thread_id = _detect_latest_kimaki_session(
+                        project_dir, task.task_id
+                    )
                     if session_id or thread_id:
                         state_store.upsert_task(
                             state,
@@ -578,13 +607,20 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
             if opencode_bin:
                 notify_thread_id = ""
                 if execute and target.channel_id and _maybe_kimaki_bin():
-                    notify_thread_id = _open_notify_thread_for_local_execution(
-                        project_dir=project_dir,
-                        channel_id=target.channel_id,
-                        user=user,
-                        task_id=task.task_id,
-                        thread_name=context.thread_name,
+                    existing_record = state.tasks.get(task.task_id)
+                    existing_thread_id = (
+                        existing_record.thread_id if existing_record else ""
                     )
+                    if existing_thread_id:
+                        notify_thread_id = existing_thread_id
+                    else:
+                        notify_thread_id = _open_notify_thread_for_local_execution(
+                            project_dir=project_dir,
+                            channel_id=target.channel_id,
+                            user=user,
+                            task_id=task.task_id,
+                            thread_name=context.thread_name,
+                        )
                     if notify_thread_id:
                         state_store.upsert_task(
                             state,
@@ -600,6 +636,19 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                         )
                         state_store.save(state)
 
+                if notify_thread_id:
+                    _post_notify_thread_update(
+                        project_dir=project_dir,
+                        thread_id=notify_thread_id,
+                        message=(
+                            f"[local-exec] {task.task_id} 进度更新\n"
+                            f"- 状态: in_progress\n"
+                            f"- 分支: {context.branch_name}\n"
+                            f"- worktree: {context.worktree_name}\n"
+                            "- 动作: 启动 opencode 执行"
+                        ),
+                    )
+
                 dispatch_output = _dispatch_via_opencode(
                     project_dir=project_dir,
                     opencode_bin=opencode_bin,
@@ -608,6 +657,17 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                     execute=execute,
                     auto_commit=policy.auto_commit,
                 )
+
+                if notify_thread_id:
+                    _post_notify_thread_update(
+                        project_dir=project_dir,
+                        thread_id=notify_thread_id,
+                        message=(
+                            f"[local-exec] {task.task_id} 进度更新\n"
+                            f"- dispatch: {dispatch_output.get('dispatch', 'done')}\n"
+                            f"- worktree: {dispatch_output.get('worktree', '')}"
+                        ),
+                    )
 
                 acceptance_summary: dict[str, Any] | None = None
                 if execute:
@@ -618,13 +678,46 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                             task_id=task.task_id,
                             fail_on_manual_only=False,
                         )
+                        current_record = state.tasks.get(task.task_id)
+                        acceptance_status = str(acceptance_summary["status"])
+                        acceptance_notes = str(acceptance_summary["notes"])
+                        failure_type = ""
+                        failure_detail = ""
+                        if acceptance_status == TaskStatus.REWORK.value:
+                            reason = str(acceptance_summary["notes"])
+                            retry_count = _next_auto_retry_count(
+                                previous_failure_detail=(
+                                    current_record.failure_detail
+                                    if current_record
+                                    else ""
+                                ),
+                                reason=reason,
+                            )
+                            _append_rework_retry_context_to_task(
+                                project_dir=project_dir,
+                                task_id=task.task_id,
+                                acceptance=acceptance_summary,
+                            )
+                            failure_detail = _build_auto_retry_tracker_detail(
+                                reason=reason, count=retry_count
+                            )
+                            if retry_count >= AUTO_RETRY_BLOCK_THRESHOLD:
+                                acceptance_status = TaskStatus.BLOCKED.value
+                                acceptance_notes = f"acceptance failed with same reason {retry_count} times; blocked for manual intervention: {reason}"
+                                failure_type = COMMAND_EXECUTION_FAILURE
+                            else:
+                                acceptance_status = TaskStatus.TODO.value
+                                acceptance_notes = (
+                                    "acceptance failed and converted to todo for auto retry"
+                                    f" ({retry_count}/{AUTO_RETRY_BLOCK_THRESHOLD}): {reason}"
+                                )
                         state_store.update_task_status(
                             state,
                             task_id=task.task_id,
-                            status=str(acceptance_summary["status"]),
-                            notes=f"auto acceptance on worktree: {acceptance_summary['notes']}",
-                            failure_type="",
-                            failure_detail="",
+                            status=acceptance_status,
+                            notes=f"auto acceptance on worktree: {acceptance_notes}",
+                            failure_type=failure_type,
+                            failure_detail=failure_detail,
                         )
                         state_store.save(state)
                         if notify_thread_id:
@@ -633,8 +726,8 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                                 thread_id=notify_thread_id,
                                 message=_format_acceptance_notify(
                                     task_id=task.task_id,
-                                    status=str(acceptance_summary["status"]),
-                                    notes=str(acceptance_summary["notes"]),
+                                    status=acceptance_status,
+                                    notes=acceptance_notes,
                                     runnable=int(acceptance_summary["runnable_checks"]),
                                     manual=int(acceptance_summary["manual_checks"]),
                                 ),
@@ -660,7 +753,9 @@ def _run_single_cycle(*, targets: list[ProjectTarget], execute: bool, user: str)
                 )
                 continue
         except RuntimeCommandError as error:
-            failure_status = _status_for_failure_type(error.failure_type, execute=execute)
+            failure_status = _status_for_failure_type(
+                error.failure_type, execute=execute
+            )
             state_store.update_task_status(
                 state,
                 task_id=task.task_id,
@@ -713,7 +808,9 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
         TaskStatus.PR_OPEN.value,
         TaskStatus.VERIFY.value,
     }
-    active_records = [record for record in state.tasks.values() if record.status in active_statuses]
+    active_records = [
+        record for record in state.tasks.values() if record.status in active_statuses
+    ]
     events: list[dict[str, Any]] = []
 
     for record in active_records:
@@ -742,8 +839,30 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
                 store.save(refreshed_state)
                 refreshed_state = store.load()
                 refreshed = refreshed_state.tasks.get(record.task_id)
+            elif _is_no_new_commits_pr_skip(str(pr_attempt.get("reason", ""))):
+                resolved_status = _resolve_no_commit_pr_status(
+                    refreshed.status if refreshed else record.status
+                )
+                resolved_notes = _resolve_no_commit_pr_note(resolved_status)
+                store.update_task_status(
+                    refreshed_state,
+                    task_id=record.task_id,
+                    status=resolved_status,
+                    pr_url="",
+                    notes=resolved_notes,
+                )
+                store.save(refreshed_state)
+                refreshed_state = store.load()
+                refreshed = refreshed_state.tasks.get(record.task_id)
+                event["no_commit_pr_policy"] = {
+                    "result": "handled",
+                    "status": resolved_status,
+                    "reason": pr_attempt.get("reason", ""),
+                }
             elif pr_attempt.get("result") in {"push_failed", "create_failed"}:
-                failure_type = str(pr_attempt.get("failure_type", COMMAND_EXECUTION_FAILURE))
+                failure_type = str(
+                    pr_attempt.get("failure_type", COMMAND_EXECUTION_FAILURE)
+                )
                 store.update_task_status(
                     refreshed_state,
                     task_id=record.task_id,
@@ -788,34 +907,37 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
 
         refreshed_state = store.load()
         refreshed = refreshed_state.tasks.get(record.task_id)
-        if refreshed and refreshed.status == TaskStatus.VERIFY.value and refreshed.pr_url:
-            if _manual_approval_required(project_dir) and not refreshed.approved_at:
-                event["done_gate"] = {
-                    "result": "awaiting_manual_approval",
-                    "required": True,
-                }
-            else:
-                done_notes = "done after verify and PR"
-                if refreshed.approved_by:
-                    done_notes += f" (approved by {refreshed.approved_by})"
-                store.update_task_status(
-                    refreshed_state,
-                    task_id=record.task_id,
-                    status=TaskStatus.DONE.value,
-                    pr_url=refreshed.pr_url,
-                    notes=done_notes,
-                )
-                store.save(refreshed_state)
-                event["done_gate"] = {
-                    "result": "done",
-                    "required": _manual_approval_required(project_dir),
-                }
+        if (
+            refreshed
+            and refreshed.status == TaskStatus.VERIFY.value
+            and refreshed.pr_url
+        ):
+            done_notes = "done after verify and PR submission"
+            store.update_task_status(
+                refreshed_state,
+                task_id=record.task_id,
+                status=TaskStatus.DONE.value,
+                pr_url=refreshed.pr_url,
+                notes=done_notes,
+            )
+            store.save(refreshed_state)
+            event["done_gate"] = {
+                "result": "done",
+                "required": False,
+            }
 
         events.append(event)
+        sync_state_and_tasks_with_options(
+            project_dir, force_state_task_ids={record.task_id}
+        )
+
+    _track_pr_lifecycle(project_dir=project_dir, store=store, events=events)
 
     latest_state = store.load()
     remaining_active = [
-        item.task_id for item in latest_state.tasks.values() if item.status in active_statuses
+        item.task_id
+        for item in latest_state.tasks.values()
+        if item.status in active_statuses
     ]
     return {
         "events": events,
@@ -823,16 +945,105 @@ def _reconcile_project_tasks(project_dir: Path, *, execute: bool) -> dict[str, A
     }
 
 
-def _manual_approval_required(project_dir: Path) -> bool:
-    config_path = project_dir / ".smartworkmate" / "config.yaml"
-    if not config_path.exists():
-        return True
-    try:
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return True
-    value = data.get("manual_approval_required", True)
-    return bool(value)
+def _track_pr_lifecycle(
+    *, project_dir: Path, store: StateStore, events: list[dict[str, Any]]
+) -> None:
+    state = store.load()
+    tracked_statuses = {
+        TaskStatus.PR_OPEN.value,
+        TaskStatus.VERIFY.value,
+        TaskStatus.DONE.value,
+        TaskStatus.IN_PROGRESS.value,
+    }
+    records = [
+        record
+        for record in state.tasks.values()
+        if record.pr_url and record.status in tracked_statuses
+    ]
+
+    for record in records:
+        status = _gh_pr_status(project_dir, record.pr_url)
+        if not status:
+            continue
+
+        outcome = str(status.get("status", "")).strip().lower()
+        reason = str(status.get("reason", "")).strip()
+        events.append(
+            {
+                "pr_track": {
+                    "task_id": record.task_id,
+                    "status": outcome,
+                    "pr_url": record.pr_url,
+                    "reason": reason,
+                }
+            }
+        )
+
+        if outcome == "open":
+            continue
+
+        refreshed = store.load()
+        current = refreshed.tasks.get(record.task_id)
+        if current is None:
+            continue
+
+        if outcome == "merged":
+            store.update_task_status(
+                refreshed,
+                task_id=record.task_id,
+                status=TaskStatus.DONE.value,
+                pr_url="",
+                notes=f"done after PR merged: {current.pr_url}",
+                failure_type="",
+                failure_detail="",
+            )
+            store.save(refreshed)
+            _cleanup_task_worktree(project_dir=project_dir, record=current)
+            continue
+
+        if outcome == "closed_unmerged":
+            if not reason or not _is_task_format_reason(reason):
+                store.update_task_status(
+                    refreshed,
+                    task_id=record.task_id,
+                    status=TaskStatus.DONE.value,
+                    pr_url="",
+                    notes=f"done after PR closed (no actionable task-format reason): {current.pr_url}",
+                    failure_type="",
+                    failure_detail="",
+                )
+                store.save(refreshed)
+                _cleanup_task_worktree(project_dir=project_dir, record=current)
+                continue
+
+            rewritten = _rewrite_task_from_reason(
+                project_dir=project_dir,
+                task_id=record.task_id,
+                reason=reason,
+            )
+            notes = "PR closed with task-format reason; rewritten and queued for redo"
+            if not rewritten:
+                notes = "PR closed with task-format reason; queued for redo (manual rewrite needed)"
+
+            store.update_task_status(
+                refreshed,
+                task_id=record.task_id,
+                status=TaskStatus.TODO.value,
+                pr_url="",
+                notes=notes,
+                failure_type="",
+                failure_detail=reason,
+            )
+            store.save(refreshed)
+            events.append(
+                {
+                    "pr_rejection_followup": {
+                        "task_id": record.task_id,
+                        "followup_task_id": record.task_id,
+                        "pr_url": record.pr_url,
+                    }
+                }
+            )
 
 
 def _resolve_verification_root(project_dir: Path, record: TaskRecord) -> Path:
@@ -916,7 +1127,9 @@ def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str
         else f"[{record.task_id}] Automated task implementation"
     )
     body = _build_auto_pr_body(record=record, task=task)
-    create_result = _gh_pr_create(project_dir, base=base, head=branch, title=title, body=body)
+    create_result = _gh_pr_create(
+        project_dir, base=base, head=branch, title=title, body=body
+    )
     if create_result.get("url"):
         return {"result": "created", "url": str(create_result["url"])}
     return {
@@ -924,6 +1137,81 @@ def _ensure_pull_request(project_dir: Path, record: TaskRecord) -> dict[str, str
         "failure_type": create_result.get("failure_type", COMMAND_EXECUTION_FAILURE),
         "reason": create_result.get("reason", "unknown"),
     }
+
+
+def _git_fetch_and_pull(project_dir: Path) -> dict[str, Any]:
+    """Fetch from origin and fast-forward pull the current branch.
+
+    Skips pull if the working tree is dirty (uncommitted changes) to avoid
+    merge conflicts that would block the cycle.  Always tries fetch first so
+    remote refs are up-to-date regardless.
+    """
+    result: dict[str, Any] = {"fetch": "skipped", "pull": "skipped"}
+
+    # --- fetch ---
+    try:
+        subprocess.run(
+            ["git", "fetch", "--prune", "origin"],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+        )
+        result["fetch"] = "ok"
+    except subprocess.TimeoutExpired:
+        result["fetch"] = "timeout"
+        return result
+    except subprocess.CalledProcessError as exc:
+        result["fetch"] = f"error: {exc.stderr.strip()[:200]}"
+        return result
+    except Exception as exc:  # noqa: BLE001
+        result["fetch"] = f"error: {exc}"
+        return result
+
+    # --- check for dirty tree before pull ---
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=15,
+        )
+        if status.stdout.strip():
+            result["pull"] = "skipped: dirty working tree"
+            return result
+    except Exception:  # noqa: BLE001
+        result["pull"] = "skipped: status check failed"
+        return result
+
+    # --- pull (fast-forward only) ---
+    try:
+        subprocess.run(
+            ["git", "pull", "--ff-only", "origin"],
+            cwd=project_dir,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+        )
+        result["pull"] = "ok"
+    except subprocess.TimeoutExpired:
+        result["pull"] = "timeout"
+    except subprocess.CalledProcessError as exc:
+        # Non-fast-forward (diverged history) — not an error we should crash on
+        result["pull"] = f"skipped: {exc.stderr.strip()[:200]}"
+    except Exception as exc:  # noqa: BLE001
+        result["pull"] = f"error: {exc}"
+
+    return result
 
 
 def _push_branch(project_dir: Path, branch: str) -> dict[str, str]:
@@ -971,7 +1259,9 @@ def _build_auto_pr_body(*, record: TaskRecord, task: Any | None) -> str:
     )
     unresolved: list[str] = []
     if record.status in {TaskStatus.BLOCKED.value, TaskStatus.REWORK.value}:
-        unresolved.append(record.notes.strip() or "任务当前状态不是可直接完成，需人工复核")
+        unresolved.append(
+            record.notes.strip() or "任务当前状态不是可直接完成，需人工复核"
+        )
     if not unresolved:
         unresolved.append("暂无显式阻塞；请结合 diff 和测试记录做最终人工确认")
 
@@ -1017,12 +1307,15 @@ def _gh_pr_view(project_dir: Path, branch: str) -> str:
     return str(url or "")
 
 
-def _gh_pr_create(project_dir: Path, *, base: str, head: str, title: str, body: str) -> dict[str, str]:
+def _gh_pr_create(
+    project_dir: Path, *, base: str, head: str, title: str, body: str
+) -> dict[str, str]:
     missing_sections = _missing_pr_body_sections(body)
     if missing_sections:
         return {
             "failure_type": COMMAND_EXECUTION_FAILURE,
-            "reason": "PR body missing required sections: " + ", ".join(missing_sections),
+            "reason": "PR body missing required sections: "
+            + ", ".join(missing_sections),
         }
 
     gh_bin = _maybe_gh_bin()
@@ -1033,7 +1326,19 @@ def _gh_pr_create(project_dir: Path, *, base: str, head: str, title: str, body: 
         }
     try:
         completed = run_or_raise(
-            [gh_bin, "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body],
+            [
+                gh_bin,
+                "pr",
+                "create",
+                "--base",
+                base,
+                "--head",
+                head,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
             cwd=project_dir,
             max_retries=3,
             base_delay_seconds=1.0,
@@ -1049,6 +1354,153 @@ def _gh_pr_create(project_dir: Path, *, base: str, head: str, title: str, body: 
         if line.startswith("https://"):
             return {"url": line.strip()}
     return {"reason": output or "missing PR URL in gh output"}
+
+
+def _gh_pr_status(project_dir: Path, pr_url: str) -> dict[str, str]:
+    gh_bin = _maybe_gh_bin()
+    if not gh_bin:
+        return {}
+    parsed = PR_URL_RE.search(pr_url or "")
+    if not parsed:
+        return {}
+    owner, repo, number = parsed.group(1), parsed.group(2), parsed.group(3)
+    pr_api = subprocess.run(
+        [gh_bin, "api", f"repos/{owner}/{repo}/pulls/{number}"],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if pr_api.returncode != 0:
+        return {}
+    try:
+        payload = json.loads(pr_api.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    state = str(payload.get("state", "")).lower()
+    merged_at = payload.get("merged_at")
+    if state == "open":
+        return {"status": "open"}
+    if merged_at:
+        return {"status": "merged"}
+
+    reason = _gh_pr_rejection_reason(project_dir, owner=owner, repo=repo, number=number)
+    return {"status": "closed_unmerged", "reason": reason}
+
+
+def _gh_pr_rejection_reason(
+    project_dir: Path, *, owner: str, repo: str, number: str
+) -> str:
+    gh_bin = _maybe_gh_bin()
+    if not gh_bin:
+        return ""
+    reviews_api = subprocess.run(
+        [gh_bin, "api", f"repos/{owner}/{repo}/pulls/{number}/reviews"],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if reviews_api.returncode != 0:
+        return ""
+    try:
+        reviews = json.loads(reviews_api.stdout)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(reviews, list):
+        return ""
+
+    for review in reversed(reviews):
+        if not isinstance(review, dict):
+            continue
+        state = str(review.get("state", "")).upper()
+        if state != "CHANGES_REQUESTED":
+            continue
+        body = str(review.get("body", "")).strip()
+        if body:
+            return body
+    return ""
+
+
+def _cleanup_task_worktree(*, project_dir: Path, record: TaskRecord) -> None:
+    worktree_name = record.worktree_name.strip()
+    if not worktree_name:
+        return
+    worktree_dir = _worktree_root(project_dir) / worktree_name
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(worktree_dir)],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "worktree", "prune"],
+        cwd=project_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+
+
+def _is_task_format_reason(reason: str) -> bool:
+    text = (reason or "").strip()
+    if not text:
+        return False
+    required = ("## 任务需求", "## 任务设计", "## 交付验收")
+    if not all(token in text for token in required):
+        return False
+    return bool(re.search(r"^-\s*\[(?: |x|X)\]", text, flags=re.MULTILINE))
+
+
+def _rewrite_task_from_reason(*, project_dir: Path, task_id: str, reason: str) -> bool:
+    task = _find_task_by_id(project_dir, task_id)
+    if task is None:
+        return False
+    path = task.path
+    try:
+        current = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+    body = (reason or "").strip()
+    if not _is_task_format_reason(body):
+        return False
+
+    try:
+        frontmatter, _old_body = _split_frontmatter_text(current)
+    except Exception:
+        return False
+
+    if not body.rstrip().endswith("--FIN--"):
+        body = body.rstrip() + "\n\n--FIN--"
+
+    updated = "---\n" + frontmatter.rstrip("\n") + "\n---\n\n" + body.rstrip() + "\n"
+    try:
+        path.write_text(updated, encoding="utf-8")
+    except Exception:
+        return False
+    return True
+
+
+def _split_frontmatter_text(text: str) -> tuple[str, str]:
+    if not text.startswith("---\n"):
+        raise ValueError("missing frontmatter start")
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        raise ValueError("missing frontmatter end")
+    frontmatter = text[4:end]
+    body = text[end + 5 :]
+    return frontmatter, body
 
 
 def _missing_pr_body_sections(body: str) -> list[str]:
@@ -1135,30 +1587,40 @@ def _open_notify_thread_for_local_execution(
     return _extract_thread_id_from_text(completed.stdout)
 
 
-def _post_notify_thread_update(*, project_dir: Path, thread_id: str, message: str) -> None:
+def _post_notify_thread_update(
+    *, project_dir: Path, thread_id: str, message: str
+) -> None:
     if not thread_id:
         return
-    command = [
-        _resolve_kimaki_bin(),
-        "send",
-        "--thread",
-        thread_id,
-        "--prompt",
-        message,
-        "--notify-only",
-    ]
-    subprocess.run(
-        command,
-        cwd=project_dir,
-        check=False,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-    )
+    lines = [line.strip() for line in (message or "").splitlines() if line.strip()]
+    if not lines:
+        return
+
+    kimaki_bin = _resolve_kimaki_bin()
+    for line in lines:
+        command = [
+            kimaki_bin,
+            "send",
+            "--thread",
+            thread_id,
+            "--prompt",
+            line,
+            "--notify-only",
+        ]
+        subprocess.run(
+            command,
+            cwd=project_dir,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
 
 
-def _format_acceptance_notify(*, task_id: str, status: str, notes: str, runnable: int, manual: int) -> str:
+def _format_acceptance_notify(
+    *, task_id: str, status: str, notes: str, runnable: int, manual: int
+) -> str:
     return (
         f"[local-exec] {task_id} 进度更新\n"
         f"- acceptance status: {status}\n"
@@ -1201,11 +1663,18 @@ def _dispatch_via_opencode(
     if not execute:
         return {
             "worktree": str(worktree_dir),
-            "dispatch": "DRY-RUN: " + " ".join(git_command) + " && " + " ".join(opencode_command),
+            "dispatch": "DRY-RUN: "
+            + " ".join(git_command)
+            + " && "
+            + " ".join(opencode_command),
         }
 
     worktree_root.mkdir(parents=True, exist_ok=True)
-    _ensure_worktree_available(project_dir=project_dir, worktree_dir=worktree_dir, branch_name=context.branch_name)
+    _ensure_worktree_available(
+        project_dir=project_dir,
+        worktree_dir=worktree_dir,
+        branch_name=context.branch_name,
+    )
     try:
         run_or_raise(
             git_command,
@@ -1216,9 +1685,17 @@ def _dispatch_via_opencode(
         )
     except RuntimeCommandError as error:
         message = str(error)
-        if "already used by worktree" not in message and "already checked out" not in message:
+        if (
+            "already used by worktree" not in message
+            and "already checked out" not in message
+        ):
             raise
-        _cleanup_conflicting_worktree(project_dir=project_dir, worktree_dir=worktree_dir, branch_name=context.branch_name, error_text=message)
+        _cleanup_conflicting_worktree(
+            project_dir=project_dir,
+            worktree_dir=worktree_dir,
+            branch_name=context.branch_name,
+            error_text=message,
+        )
         run_or_raise(
             git_command,
             cwd=project_dir,
@@ -1244,11 +1721,15 @@ def _dispatch_via_opencode(
 
     commit_info = ""
     if auto_commit:
-        commit_info = _auto_commit_worktree(worktree_dir, context.task.task_id, context.task.title)
+        commit_info = _auto_commit_worktree(
+            worktree_dir, context.task.task_id, context.task.title
+        )
 
     return {
         "worktree": str(worktree_dir),
-        "dispatch": (completed.stdout.strip() + ("\n" + commit_info if commit_info else "")).strip(),
+        "dispatch": (
+            completed.stdout.strip() + ("\n" + commit_info if commit_info else "")
+        ).strip(),
     }
 
 
@@ -1256,7 +1737,9 @@ def _worktree_root(project_dir: Path) -> Path:
     return project_dir / ".smartworkmate" / "worktrees"
 
 
-def _sync_task_markdown_to_worktree(*, project_dir: Path, worktree_dir: Path, task_path: Path) -> None:
+def _sync_task_markdown_to_worktree(
+    *, project_dir: Path, worktree_dir: Path, task_path: Path
+) -> None:
     try:
         relative = task_path.resolve().relative_to(project_dir.resolve())
     except Exception:
@@ -1275,7 +1758,9 @@ def _sync_task_markdown_to_worktree(*, project_dir: Path, worktree_dir: Path, ta
     shutil.copy2(source, target)
 
 
-def _sync_task_file_for_acceptance(*, project_dir: Path, verify_root: Path, task_id: str) -> None:
+def _sync_task_file_for_acceptance(
+    *, project_dir: Path, verify_root: Path, task_id: str
+) -> None:
     task = _find_task_by_id(project_dir, task_id)
     if task is None:
         return
@@ -1286,7 +1771,9 @@ def _sync_task_file_for_acceptance(*, project_dir: Path, verify_root: Path, task
     )
 
 
-def _ensure_worktree_available(*, project_dir: Path, worktree_dir: Path, branch_name: str) -> None:
+def _ensure_worktree_available(
+    *, project_dir: Path, worktree_dir: Path, branch_name: str
+) -> None:
     if worktree_dir.exists():
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(worktree_dir)],
@@ -1317,7 +1804,9 @@ def _ensure_worktree_available(*, project_dir: Path, worktree_dir: Path, branch_
     )
 
 
-def _cleanup_conflicting_worktree(*, project_dir: Path, worktree_dir: Path, branch_name: str, error_text: str) -> None:
+def _cleanup_conflicting_worktree(
+    *, project_dir: Path, worktree_dir: Path, branch_name: str, error_text: str
+) -> None:
     conflict_path = _extract_conflict_worktree_path(error_text)
     if conflict_path:
         subprocess.run(
@@ -1329,7 +1818,9 @@ def _cleanup_conflicting_worktree(*, project_dir: Path, worktree_dir: Path, bran
             errors="replace",
             capture_output=True,
         )
-    _ensure_worktree_available(project_dir=project_dir, worktree_dir=worktree_dir, branch_name=branch_name)
+    _ensure_worktree_available(
+        project_dir=project_dir, worktree_dir=worktree_dir, branch_name=branch_name
+    )
 
 
 def _extract_conflict_worktree_path(error_text: str) -> str:
@@ -1414,12 +1905,136 @@ def _status_for_failure_type(failure_type: str, *, execute: bool) -> str:
         return TaskStatus.TODO.value
     if failure_type == NETWORK_FAILURE:
         return TaskStatus.TODO.value
-    if failure_type in {PERMISSION_FAILURE, TASK_FORMAT_FAILURE, COMMAND_EXECUTION_FAILURE}:
+    if failure_type in {
+        PERMISSION_FAILURE,
+        TASK_FORMAT_FAILURE,
+        COMMAND_EXECUTION_FAILURE,
+    }:
         return TaskStatus.BLOCKED.value
     return TaskStatus.BLOCKED.value
 
 
-def _validate_branch_ready_for_pr(project_dir: Path, *, base: str, branch: str) -> dict[str, str]:
+def _is_no_new_commits_pr_skip(reason: str) -> bool:
+    value = (reason or "").strip().lower()
+    return "has no new commits" in value and "pr creation skipped" in value
+
+
+def _resolve_no_commit_pr_status(current_status: str) -> str:
+    if current_status == TaskStatus.VERIFY.value:
+        return TaskStatus.DONE.value
+    return TaskStatus.REWORK.value
+
+
+def _resolve_no_commit_pr_note(resolved_status: str) -> str:
+    if resolved_status == TaskStatus.DONE.value:
+        return "done without PR (no new commits on branch)"
+    return "rework required: no new commits on branch; PR creation skipped"
+
+
+def _normalize_retry_reason(reason: str) -> str:
+    return re.sub(r"\s+", " ", (reason or "").strip().lower())
+
+
+def _parse_auto_retry_tracker_detail(detail: str) -> dict[str, Any]:
+    raw = (detail or "").strip()
+    if not raw.startswith(AUTO_RETRY_TRACKER_PREFIX):
+        return {}
+    payload = raw[len(AUTO_RETRY_TRACKER_PREFIX) :]
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _build_auto_retry_tracker_detail(*, reason: str, count: int) -> str:
+    payload = {
+        "reason": reason,
+        "reason_norm": _normalize_retry_reason(reason),
+        "count": max(1, int(count)),
+    }
+    return AUTO_RETRY_TRACKER_PREFIX + json.dumps(payload, ensure_ascii=False)
+
+
+def _next_auto_retry_count(*, previous_failure_detail: str, reason: str) -> int:
+    tracker = _parse_auto_retry_tracker_detail(previous_failure_detail)
+    prev_reason = _normalize_retry_reason(
+        str(tracker.get("reason") or tracker.get("reason_norm") or "")
+    )
+    current_reason = _normalize_retry_reason(reason)
+    if not prev_reason or prev_reason != current_reason:
+        return 1
+    try:
+        prev_count = int(tracker.get("count", 0))
+    except Exception:
+        prev_count = 0
+    return max(1, prev_count + 1)
+
+
+def _append_rework_retry_context_to_task(
+    *,
+    project_dir: Path,
+    task_id: str,
+    acceptance: dict[str, Any],
+) -> None:
+    task = _find_task_by_id(project_dir, task_id)
+    if task is None:
+        return
+    path = task.path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    reason = str(acceptance.get("notes", "")).strip() or "acceptance failed"
+    results = acceptance.get("results", [])
+    failed_commands: list[str] = []
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            try:
+                code = int(item.get("exit_code", 0))
+            except Exception:
+                code = 0
+            if code == 0:
+                continue
+            check = str(item.get("check", "")).strip()
+            command = str(item.get("command", "")).strip()
+            failed_commands.append(
+                f"- check: {check} | command: {command} | exit_code: {code}"
+            )
+
+    block = (
+        "\n### 自动重试上下文\n"
+        f"- 上轮失败原因: {reason}\n"
+        + ("\n".join(failed_commands) + "\n" if failed_commands else "")
+        + "- 下一轮要求: 根据失败信息修复后重新执行并通过验收\n"
+    )
+
+    marker = "### 自动重试上下文"
+    if marker in text:
+        head, _, tail = text.partition(marker)
+        if "--FIN--" in tail:
+            _, _, after_fin = tail.partition("--FIN--")
+            text = head.rstrip() + block + "\n--FIN--" + after_fin
+        else:
+            text = head.rstrip() + block
+    elif "--FIN--" in text:
+        before, _, after = text.partition("--FIN--")
+        text = before.rstrip() + block + "\n--FIN--" + after
+    else:
+        text = text.rstrip() + block
+
+    try:
+        path.write_text(text, encoding="utf-8")
+    except Exception:
+        return
+
+
+def _validate_branch_ready_for_pr(
+    project_dir: Path, *, base: str, branch: str
+) -> dict[str, str]:
     exists = subprocess.run(
         ["git", "rev-parse", "--verify", branch],
         cwd=project_dir,
@@ -1466,6 +2081,8 @@ def _validate_branch_ready_for_pr(project_dir: Path, *, base: str, branch: str) 
 
 
 def _auto_commit_worktree(worktree_dir: Path, task_id: str, title: str) -> str:
+    _apply_pre_commit_hygiene(worktree_dir)
+
     status = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=worktree_dir,
@@ -1485,6 +2102,21 @@ def _auto_commit_worktree(worktree_dir: Path, task_id: str, title: str) -> str:
         base_delay_seconds=0.5,
         max_delay_seconds=1.0,
     )
+
+    _unstage_disallowed_paths(worktree_dir)
+
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=worktree_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if not staged.stdout.strip():
+        return "auto-commit: skipped (no allowed staged changes)"
+
     message = f"feat({task_id.lower()}): {title}"[:120]
     commit = subprocess.run(
         ["git", "commit", "-m", message],
@@ -1498,6 +2130,95 @@ def _auto_commit_worktree(worktree_dir: Path, task_id: str, title: str) -> str:
     if commit.returncode != 0:
         return "auto-commit: skipped (commit command failed or no staged changes)"
     return "auto-commit: created commit"
+
+
+def _apply_pre_commit_hygiene(worktree_dir: Path) -> None:
+    gitignore = worktree_dir / ".gitignore"
+    existing = ""
+    if gitignore.exists():
+        try:
+            existing = gitignore.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+    patterns = [
+        "__pycache__/",
+        "*.pyc",
+        "*.pyo",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        ".ruff_cache/",
+        "node_modules/",
+        ".venv/",
+        ".smartworkmate/",
+    ]
+    lines = existing.splitlines()
+    changed = False
+    for pattern in patterns:
+        if pattern not in lines:
+            lines.append(pattern)
+            changed = True
+    if not changed:
+        return
+    payload = "\n".join(lines).rstrip() + "\n"
+    try:
+        gitignore.write_text(payload, encoding="utf-8")
+    except Exception:
+        return
+
+
+def _unstage_disallowed_paths(worktree_dir: Path) -> None:
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=worktree_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    lines = [
+        line.strip().replace("\\", "/")
+        for line in staged.stdout.splitlines()
+        if line.strip()
+    ]
+    if not lines:
+        return
+
+    disallowed: list[str] = []
+    for path in lines:
+        lowered = path.lower()
+        if (
+            "/__pycache__/" in f"/{lowered}"
+            or lowered.endswith(".pyc")
+            or lowered.endswith(".pyo")
+        ):
+            disallowed.append(path)
+            continue
+        if lowered.startswith(".smartworkmate/"):
+            disallowed.append(path)
+            continue
+        if re.search(r"(^|/)tmp_.*\.py$", lowered):
+            disallowed.append(path)
+            continue
+        if re.search(r"(^|/)debug_.*\.py$", lowered):
+            disallowed.append(path)
+            continue
+        if re.search(r"(^|/)smartworkmate_.*(helper|script).*\.py$", lowered):
+            disallowed.append(path)
+            continue
+
+    if not disallowed:
+        return
+    for path in disallowed:
+        subprocess.run(
+            ["git", "reset", "--", path],
+            cwd=worktree_dir,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
 
 
 def _load_execution_policy(project_dir: Path) -> ExecutionPolicy:
@@ -1592,7 +2313,9 @@ def _render_live_status(
         if item.get("result") == "waiting_active_tasks":
             ids = item.get("active_task_ids", [])
             if isinstance(ids, list) and ids:
-                active_lines.append(f"- {short_project}: active {', '.join(str(x) for x in ids)}")
+                active_lines.append(
+                    f"- {short_project}: active {', '.join(str(x) for x in ids)}"
+                )
                 status_counts["active"] += len(ids)
 
         mode = str(item.get("mode", ""))
@@ -1620,10 +2343,14 @@ def _render_live_status(
                     sync = event.get("sync", {})
                     auto_pr = event.get("auto_pr", {})
                     if isinstance(sync, dict) and sync.get("pr_url"):
-                        pr_lines.append(f"- {short_project}: {task_id} PR {sync.get('pr_url', '')}")
+                        pr_lines.append(
+                            f"- {short_project}: {task_id} PR {sync.get('pr_url', '')}"
+                        )
                         status_counts["pr"] += 1
                     if isinstance(auto_pr, dict) and auto_pr.get("url"):
-                        pr_lines.append(f"- {short_project}: {task_id} PR {auto_pr.get('url', '')}")
+                        pr_lines.append(
+                            f"- {short_project}: {task_id} PR {auto_pr.get('url', '')}"
+                        )
                         status_counts["pr"] += 1
                     if isinstance(auto_pr, dict) and auto_pr.get("reason"):
                         pr_lines.append(
@@ -1638,7 +2365,9 @@ def _render_live_status(
         if isinstance(result, dict):
             reason = result.get("reason")
             if reason:
-                failure_lines.append(f"- {short_project}: {mode or 'unknown'} failed: {reason}")
+                failure_lines.append(
+                    f"- {short_project}: {mode or 'unknown'} failed: {reason}"
+                )
                 status_counts["failure"] += 1
 
     mode_text = "执行模式" if execute else "干跑模式"
@@ -1666,7 +2395,9 @@ def _render_live_status(
     buffer_lines.append(
         f"模式: {mode_text} | 周期: {cycle_index} | 目标项目: {cycle_result.get('targets', 0)} | 识别项目: {len(project_set)}"
     )
-    buffer_lines.append(f"轮询间隔: {interval_seconds}s | 下次刷新: {countdown_text} | 退出: Ctrl+C")
+    buffer_lines.append(
+        f"轮询间隔: {interval_seconds}s | 下次刷新: {countdown_text} | 退出: Ctrl+C"
+    )
     buffer_lines.append(
         "统计: "
         f"派发={status_counts['dispatch']} | 活跃={status_counts['active']} | "
@@ -1707,7 +2438,9 @@ def _render_live_status(
         buffer_lines.append("- 暂无历史事件")
 
     buffer_lines.append("")
-    buffer_lines.append(f"{dim}提示: 固定面板每秒刷新; 历史日志保留最近 {LIVE_HISTORY_LIMIT} 条事件。{_Color.RESET}")
+    buffer_lines.append(
+        f"{dim}提示: 固定面板每秒刷新; 历史日志保留最近 {LIVE_HISTORY_LIMIT} 条事件。{_Color.RESET}"
+    )
 
     screen = "\n".join(buffer_lines)
     os.system("cls" if os.name == "nt" else "clear")
@@ -1841,7 +2574,9 @@ def _sleep_with_heartbeat(
 
 
 def _extract_task_id_from_text(text: str) -> str:
-    match = re.search(r"(TSK-\d{4}-\d{3}|AUTO-[0-9A-Fa-f]{8})", text, flags=re.IGNORECASE)
+    match = re.search(
+        r"(TSK-\d{4}-\d{3}|AUTO-[0-9A-Fa-f]{8})", text, flags=re.IGNORECASE
+    )
     if not match:
         return ""
     return match.group(1).upper()
