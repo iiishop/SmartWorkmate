@@ -32,3 +32,4 @@
 - HRisk auto tasks have a backlog cap (5 unfinished) and duplicate-topic suppression against unfinished auto tasks.
 - Launcher bug noted: bat passed empty positional args into PowerShell script, causing `--user` to be emitted without value. PS1 now normalizes empty Mode/User to defaults.
 - Execute mode now supports live dashboard rendering with per-second panel refresh (Chinese labels) instead of accumulating heartbeat logs.
+- Task parser must tolerate `references:` or `labels:` being explicitly set to null in YAML frontmatter; treat null as empty list to avoid crash during sync.

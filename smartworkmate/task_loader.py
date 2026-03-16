@@ -22,7 +22,8 @@ def load_tasks(tasks_dir: Path) -> list[Task]:
 
     tasks: list[Task] = []
     for path in sorted(tasks_dir.rglob("*.md")):
-        if path.name.lower() == "readme.md":
+        name = path.name.lower()
+        if name in {"readme.md", "template.md"}:
             continue
         task = load_task_file(path)
         tasks.append(task)
@@ -52,8 +53,8 @@ def load_task_file(path: Path) -> Task:
         base_branch=str(meta.get("base_branch", "main")),
         priority=str(meta.get("priority", "medium")),
         status=TaskStatus(str(meta.get("status", "todo"))),
-        labels=[str(x) for x in meta.get("labels", [])],
-        references=[str(x) for x in meta.get("references", [])],
+        labels=_as_str_list(meta.get("labels")),
+        references=_as_str_list(meta.get("references")),
         path=path,
         requirements=sections["任务需求"].strip(),
         design=sections["任务设计"].strip(),
@@ -64,6 +65,14 @@ def load_task_file(path: Path) -> Task:
 
 def _has_fin_marker(text: str) -> bool:
     return text.rstrip().endswith(FIN_MARKER)
+
+
+def _as_str_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
