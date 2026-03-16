@@ -6,6 +6,14 @@ param(
   [string]$User = "iiishop"
 )
 
+if ([string]::IsNullOrWhiteSpace($Mode)) {
+  $Mode = "execute"
+}
+
+if ([string]::IsNullOrWhiteSpace($User)) {
+  $User = "iiishop"
+}
+
 function Zh([int[]]$codes) {
   return -join ($codes | ForEach-Object { [char]$_ })
 }

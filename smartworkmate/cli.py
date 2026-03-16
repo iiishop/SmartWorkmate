@@ -60,6 +60,11 @@ def main() -> None:
     start_parser.add_argument("--user", default="iiishop", help="Kimaki username for new threads")
     start_parser.add_argument("--live", action="store_true", help="Show live dashboard during daemon execution")
     start_parser.add_argument("--no-live", action="store_true", help="Disable live dashboard output")
+    start_parser.add_argument(
+        "--opencode-global",
+        action="store_true",
+        help="Discover projects from OpenCode indexed project table without root scoping",
+    )
 
     memory_parser = subparsers.add_parser("memory-refresh", help="Refresh project memory snapshot")
     memory_parser.add_argument("--max-commits", type=int, default=80, help="Number of commits to index")
@@ -178,6 +183,7 @@ def main() -> None:
             interval_seconds=max(30, int(args.interval)),
             user=str(args.user),
             live_status=live_status,
+            opencode_global=bool(args.opencode_global),
         )
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return

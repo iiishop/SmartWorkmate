@@ -139,10 +139,12 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
     if not finding_lines:
         finding_lines = ["- No TODO/FIXME/HACK markers found in current scan"]
 
+    base_branch = _detect_repo_base_branch(repo_root)
+
     content = {
         "task_id": f"AUTO-{head_sha[:8]}",
         "title": f"Auto {'high-risk' if risk == 'high' else 'low-risk'} maintenance: {topic}",
-        "base_branch": "main",
+        "base_branch": base_branch,
         "priority": "high" if risk == "high" else "low",
         "status": "todo",
         "labels": ["auto", "maintenance", "hrisk" if risk == "high" else "lrisk"],
@@ -191,7 +193,38 @@ def create_idle_improvement_task(repo_root: Path, *, max_commits: int = 20) -> d
         "path": str(target),
         "risk": risk,
         "topic": topic,
+        "base_branch": base_branch,
     }
+
+
+def _detect_repo_base_branch(repo_root: Path) -> str:
+    origin_head = subprocess.run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        cwd=repo_root,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if origin_head.returncode == 0:
+        value = origin_head.stdout.strip()
+        if value.startswith("origin/") and len(value) > 7:
+            return value[7:]
+
+    current = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo_root,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    branch = current.stdout.strip()
+    if branch:
+        return branch
+    return "main"
 
 
 def _classify_risk(*, commits: list[dict[str, str]], findings: list[str]) -> str:

@@ -97,13 +97,24 @@ def _validate_meta(path: Path, meta: dict[str, object]) -> None:
 def _extract_sections(body: str) -> dict[str, str]:
     pattern = r"^##\s+(.+?)\n(.*?)(?=^##\s+|\Z)"
     matches = re.finditer(pattern, body, flags=re.MULTILINE | re.DOTALL)
-    return {m.group(1).strip(): m.group(2).strip() for m in matches}
+    sections: dict[str, str] = {}
+    for match in matches:
+        raw_name = match.group(1).strip()
+        normalized_name = _normalize_section_name(raw_name)
+        sections[normalized_name] = match.group(2).strip()
+    return sections
+
+
+def _normalize_section_name(name: str) -> str:
+    normalized = name.strip()
+    normalized = re.sub(r"[\s\.:：。·、，]+$", "", normalized)
+    return normalized
 
 
 def _extract_checkbox_items(section_text: str) -> list[str]:
     lines = [line.strip() for line in section_text.splitlines()]
     out: list[str] = []
     for line in lines:
-        if line.startswith("- [ ]"):
+        if re.match(r"^-\s*\[(?: |x|X)\]", line):
             out.append(line[5:].strip())
     return out

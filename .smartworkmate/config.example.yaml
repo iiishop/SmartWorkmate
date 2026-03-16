@@ -4,6 +4,6 @@ project_directory: "D:\\workspace\\projects\\SmartWorkmate"
 default_session_id: ""
 default_thread_id: ""
 manual_approval_required: true
-execution_backend: "opencode_local"
+execution_backend: "auto"
 require_worktree_isolation: true
 auto_commit: true

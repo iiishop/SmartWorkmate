@@ -45,7 +45,18 @@ docs/tasks/
 ## Quick start
 
 1. Sync dependencies with `uv sync`.
-2. Start the autonomous runner (single command):
+2. Start the launcher GUI:
+
+```bash
+uv run gui.py
+```
+
+Note: run `uv sync` in terminal before launching GUI. Do not run `uv sync` while GUI is running.
+If desktop runtime import fails (some Python/Flet combos), launcher falls back to browser mode automatically.
+
+GUI now provides a Chinese visual command center with tabs (`总览/项目/时间线/日志`), metric cards, project chips, event timeline, and colored log feeds, replacing old terminal-style fixed panel output.
+
+3. Start the autonomous runner directly via CLI (optional):
 
 ```bash
 uv run python -m smartworkmate.cli start --root D:\workspace --execute --user iiishop
@@ -57,12 +68,14 @@ Windows one-click launcher:
 start-smartworkmate.bat
 ```
 
-The `.bat` launcher delegates to `start-smartworkmate.ps1` for Chinese guidance output.
+The `.bat` launcher opens the Flet GUI and runs `uv run gui.py`.
+It performs `uv sync` first, then launches the GUI.
 
 Live execute dashboard:
 
 - In execute daemon mode, `start` now renders a live status dashboard (projects, active tasks, auto-task actions, PR status).
 - Use `--no-live` to disable live status output.
+- Use `--opencode-global` to discover projects directly from OpenCode indexed project table (ignores root scope for OpenCode projects).
 
 Dry-run once mode:
 
@@ -90,6 +103,12 @@ Auto task risk policy:
 - `HRisk` tasks are generated without `--FIN--`; they never run until a human appends `--FIN--`.
 - To limit noise, unfinished `HRisk` auto tasks are capped at 5.
 - Auto task generation checks unfinished auto tasks to avoid duplicate topics.
+- Auto task `base_branch` is inferred from repository default/current branch (not hardcoded `main`).
+
+Project discovery note:
+
+- Worktree directories are canonicalized back to their parent repository root to avoid duplicate project entries in the live panel.
+- Local execution worktrees are created under each project at `.smartworkmate/worktrees/` (not sibling directories), so source roots stay clean.
 
 Behavior note:
 
@@ -110,7 +129,9 @@ SmartWorkmate now includes runtime reliability controls for unattended execution
 - **Crash recovery / reconcile**: startup cycle always reconciles `in_progress`, `pr_open`, and `verify`
   records first, so unfinished tasks are resumed from state and not redispatched blindly.
 - **Branch/PR guard**: PR creation now requires branch existence and commits ahead of base.
-- **Isolation policy**: execution backend is configurable; default backend is `opencode_local` with worktree isolation enabled.
+- **Isolation policy**: execution backend is configurable; default backend is `auto` (prefer `kimaki` when channel is configured, fallback to `opencode_local`) with worktree isolation enabled.
+- **Isolation guarantee**: when `require_worktree_isolation=true`, dispatcher is forced to local worktree execution (`opencode_local`) to avoid mutating source root directly.
+- **Kimaki as companion channel**: in isolation mode, execution stays local, but SmartWorkmate now opens one Discord thread per task session via `kimaki --notify-only` and posts progress summaries there.
 
 ## Task finalization rule
 
@@ -121,6 +142,12 @@ For safe testing use dry-run:
 
 ```bash
 uv run python -m smartworkmate.cli start --root D:\workspace --dry-run --once
+```
+
+OpenCode-global discovery mode:
+
+```bash
+uv run python -m smartworkmate.cli start --execute --opencode-global --user iiishop
 ```
 
 3. Optional: project-local setup command:

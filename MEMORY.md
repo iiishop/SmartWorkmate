@@ -32,4 +32,23 @@
 - HRisk auto tasks have a backlog cap (5 unfinished) and duplicate-topic suppression against unfinished auto tasks.
 - Launcher bug noted: bat passed empty positional args into PowerShell script, causing `--user` to be emitted without value. PS1 now normalizes empty Mode/User to defaults.
 - Execute mode now supports live dashboard rendering with per-second panel refresh (Chinese labels) instead of accumulating heartbeat logs.
+- Project discovery now canonicalizes worktree paths (e.g. `.repo-worktrees/*`) back to repo roots to avoid duplicate project cards.
+- Auto task generator now infers `base_branch` from origin default branch/current branch instead of hardcoded `main`.
+- Live panel now uses a fixed full-screen layout with optional ANSI colors, richer metrics/policy/error sections, and an in-memory rolling history log.
+- Dispatch failures on external projects were caused by stale worktree branch collisions and outdated `opencode run --prompt` usage; runner now cleans conflicting worktrees/branches and uses positional prompt for opencode.
+- Default dispatch backend now uses `auto` strategy (prefer kimaki when channel exists, fallback to local opencode). Long-running dispatch now emits heartbeat logs every 10s to avoid "stuck" perception.
+- Auto PR creation now has a PR-body quality gate: required sections (`Summary`, `Acceptance Mapping`, `Concerns / Unfinished Items`, `Reviewer Notes`) must exist or PR creation is blocked with explicit reason.
+- `gh` may not resolve from process PATH in some shells on Windows; runner now checks standard install paths like `C:/Program Files/GitHub CLI/gh.exe`.
+- Added Flet GUI launcher (`uv run gui.py`) as primary local startup experience; `start-smartworkmate.bat` now opens this GUI.
+- `start` now supports `--opencode-global` to use OpenCode indexed projects directly without root scoping; GUI exposes this as default checkbox so root input is optional.
+- Running `uv sync` from inside the Flet GUI can fail on Windows with locked `flet_desktop` DLLs; GUI no longer runs `uv sync` internally, and `.bat` now syncs before launching GUI.
+- On some environments (notably Python 3.13 + flet desktop wheel mismatch), `flet_desktop` import can fail; launcher now catches this and falls back to browser mode (`AppView.WEB_BROWSER`).
+- Live runner now forces UTF-8 console output on startup (including Windows console code page 65001) and disables ANSI colors when stdout is not UTF-8/TTY to reduce Chinese mojibake in redirected logs.
+- Flet GUI has been upgraded from a log-only launcher to a visual dashboard: it runs `start --once --no-live` cycles internally and renders metrics/cards (dispatch, active, auto, PR, errors, policy, history) instead of terminal-style panel output.
+- Worktree storage policy is now fixed: local execution worktrees live under each repo at `.smartworkmate/worktrees/` to avoid polluting sibling directories; this path is gitignored.
+- Task section heading parser now normalizes trailing punctuation (e.g. `任务需求·`, `任务设计：`, `交付验收。`) so minor formatting marks do not break task loading.
+- Reconcile PR auto-create no longer marks task blocked when branch is not yet ready (`branch not found` / `no new commits`); it now reports `not_ready` and keeps task in progress for async completion.
+- To enforce no source-root pollution, backend selection now hard-forces local execution whenever `require_worktree_isolation=true`; Kimaki dispatch is disabled in that mode.
+- In isolation mode, Kimaki remains as a companion notifier: one `--notify-only` thread is created per task session and local acceptance progress is posted back to that thread.
+- GUI has been further upgraded to a Chinese visual command center (tabbed layout, metrics cards, per-project chips, timeline stream, colored logs) and no longer mirrors legacy TUI composition.
 - Task parser must tolerate `references:` or `labels:` being explicitly set to null in YAML frontmatter; treat null as empty list to avoid crash during sync.

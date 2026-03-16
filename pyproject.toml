@@ -5,6 +5,7 @@ description = "Autonomous worktree + PR task runner for opencode and kimaki"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "flet>=0.27.6",
   "PyYAML>=6.0.1",
 ]
 

@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from smartworkmate.proactive import FINDING_SCAN_EXCLUDES, _git_code_findings
+from smartworkmate.proactive import (
+    FINDING_SCAN_EXCLUDES,
+    _detect_repo_base_branch,
+    _git_code_findings,
+)
 
 
 class ProactiveFindingsTests(unittest.TestCase):
@@ -48,6 +52,65 @@ class ProactiveFindingsTests(unittest.TestCase):
                 "smartworkmate/auto_runner.py:384:TODO marker",
             ],
         )
+
+
+class ProactiveBaseBranchTests(unittest.TestCase):
+    def test_prefers_origin_head_branch(self) -> None:
+        origin = subprocess.CompletedProcess(
+            args=["git", "symbolic-ref"],
+            returncode=0,
+            stdout="origin/master\n",
+            stderr="",
+        )
+        current = subprocess.CompletedProcess(
+            args=["git", "branch"],
+            returncode=0,
+            stdout="feature/abc\n",
+            stderr="",
+        )
+
+        with patch("smartworkmate.proactive.subprocess.run", side_effect=[origin, current]):
+            branch = _detect_repo_base_branch(Path("."))
+
+        self.assertEqual(branch, "master")
+
+    def test_falls_back_to_current_branch_when_origin_head_missing(self) -> None:
+        origin = subprocess.CompletedProcess(
+            args=["git", "symbolic-ref"],
+            returncode=1,
+            stdout="",
+            stderr="fatal",
+        )
+        current = subprocess.CompletedProcess(
+            args=["git", "branch"],
+            returncode=0,
+            stdout="release/v1\n",
+            stderr="",
+        )
+
+        with patch("smartworkmate.proactive.subprocess.run", side_effect=[origin, current]):
+            branch = _detect_repo_base_branch(Path("."))
+
+        self.assertEqual(branch, "release/v1")
+
+    def test_returns_main_as_last_resort(self) -> None:
+        origin = subprocess.CompletedProcess(
+            args=["git", "symbolic-ref"],
+            returncode=1,
+            stdout="",
+            stderr="fatal",
+        )
+        current = subprocess.CompletedProcess(
+            args=["git", "branch"],
+            returncode=0,
+            stdout="\n",
+            stderr="",
+        )
+
+        with patch("smartworkmate.proactive.subprocess.run", side_effect=[origin, current]):
+            branch = _detect_repo_base_branch(Path("."))
+
+        self.assertEqual(branch, "main")
 
 
 if __name__ == "__main__":
