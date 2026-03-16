@@ -8,3 +8,4 @@ __pycache__/
 .smartworkmate/runs/
 .smartworkmate/memory/
 .smartworkmate/worktrees/
+webui/node_modules/

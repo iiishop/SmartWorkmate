@@ -54,6 +54,13 @@ REQUIRED_PR_BODY_SECTIONS = (
 )
 
 
+def _clip_text(value: str, *, max_chars: int = 800) -> str:
+    text = (value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + " ...[truncated]"
+
+
 class _Color:
     RESET = "\033[0m"
     DIM = "\033[2m"
