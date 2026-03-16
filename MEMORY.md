@@ -30,3 +30,5 @@
 - Task execution now requires markdown terminal marker `--FIN--`; drafts without it are visible in scan but not executable.
 - Auto tasks now split by risk: `auto/LRisk` (auto-runnable with --FIN--) and `auto/HRisk` (manual review required, no --FIN-- by default).
 - HRisk auto tasks have a backlog cap (5 unfinished) and duplicate-topic suppression against unfinished auto tasks.
+- Launcher bug noted: bat passed empty positional args into PowerShell script, causing `--user` to be emitted without value. PS1 now normalizes empty Mode/User to defaults.
+- Execute mode now supports live dashboard rendering with per-second panel refresh (Chinese labels) instead of accumulating heartbeat logs.

@@ -81,10 +81,24 @@ def start_autonomous_runner(
                     root=root,
                     execute=execute,
                     interval_seconds=interval_seconds,
+                    seconds_to_next=0,
                 )
             if once:
                 break
-            _sleep_with_heartbeat(interval_seconds, enabled=live_status)
+            _sleep_with_heartbeat(
+                interval_seconds,
+                enabled=live_status,
+                on_tick=(
+                    lambda remaining: _render_live_status(
+                        cycle_index=cycle_index,
+                        cycle_result=cycle_result,
+                        root=root,
+                        execute=execute,
+                        interval_seconds=interval_seconds,
+                        seconds_to_next=remaining,
+                    )
+                ),
+            )
     except KeyboardInterrupt:
         return {
             "result": "stopped",
@@ -1094,6 +1108,7 @@ def _render_live_status(
     root: Path,
     execute: bool,
     interval_seconds: int,
+    seconds_to_next: int,
 ) -> None:
     processed = cycle_result.get("processed", [])
     if not isinstance(processed, list):
@@ -1146,47 +1161,55 @@ def _render_live_status(
                             f"- {short_project}: {task_id} PR blocked ({auto_pr.get('reason', '')})"
                         )
 
-    os.system("cls" if os.name == "nt" else "clear")
-    print("SmartWorkmate Live Status")
-    print(f"Time: {datetime.now().isoformat(timespec='seconds')}")
-    print(f"Root: {root}")
-    print(f"Mode: {'execute' if execute else 'dry-run'} | Cycle: {cycle_index} | Targets: {cycle_result.get('targets', 0)}")
-    print(f"Interval: {interval_seconds}s")
-    print("")
+    mode_text = "执行模式" if execute else "干跑模式"
+    countdown_text = f"{seconds_to_next}s" if seconds_to_next > 0 else "立即"
 
-    print("Current Dispatch")
+    buffer_lines: list[str] = []
+    buffer_lines.append("SmartWorkmate 实时面板")
+    buffer_lines.append(f"时间: {datetime.now().isoformat(timespec='seconds')}")
+    buffer_lines.append(f"根目录: {root}")
+    buffer_lines.append(f"模式: {mode_text} | 周期: {cycle_index} | 项目数: {cycle_result.get('targets', 0)}")
+    buffer_lines.append(f"轮询间隔: {interval_seconds}s | 下次刷新: {countdown_text} | 退出: Ctrl+C")
+    buffer_lines.append("")
+
+    buffer_lines.append("当前派发")
     if dispatch_lines:
-        for line in dispatch_lines[:12]:
-            print(line)
+        buffer_lines.extend(dispatch_lines[:12])
     else:
-        print("- none")
+        buffer_lines.append("- 无")
 
-    print("")
-    print("Active Tasks")
+    buffer_lines.append("")
+    buffer_lines.append("执行中的任务")
     if active_lines:
-        for line in active_lines[:12]:
-            print(line)
+        buffer_lines.extend(active_lines[:12])
     else:
-        print("- none")
+        buffer_lines.append("- 无")
 
-    print("")
-    print("Auto Discovery")
+    buffer_lines.append("")
+    buffer_lines.append("自动发现与任务生成")
     if auto_lines:
-        for line in auto_lines[:12]:
-            print(line)
+        buffer_lines.extend(auto_lines[:12])
     else:
-        print("- none")
+        buffer_lines.append("- 无")
 
-    print("")
-    print("PR Status")
+    buffer_lines.append("")
+    buffer_lines.append("PR 状态")
     if pr_lines:
-        for line in pr_lines[:12]:
-            print(line)
+        buffer_lines.extend(pr_lines[:12])
     else:
-        print("- none")
+        buffer_lines.append("- 无")
+
+    screen = "\n".join(buffer_lines)
+    os.system("cls" if os.name == "nt" else "clear")
+    print(screen, end="\n", flush=True)
 
 
-def _sleep_with_heartbeat(seconds: int, *, enabled: bool) -> None:
+def _sleep_with_heartbeat(
+    seconds: int,
+    *,
+    enabled: bool,
+    on_tick: Any,
+) -> None:
     if seconds <= 0:
         return
     if not enabled:
@@ -1195,10 +1218,10 @@ def _sleep_with_heartbeat(seconds: int, *, enabled: bool) -> None:
 
     remaining = seconds
     while remaining > 0:
-        print(f"\rNext cycle in {remaining:3d}s (Ctrl+C to stop)", end="", flush=True)
+        on_tick(remaining)
         time.sleep(1)
         remaining -= 1
-    print("\rNext cycle now...                              ")
+    on_tick(0)
 
 
 def _extract_task_id_from_text(text: str) -> str:
