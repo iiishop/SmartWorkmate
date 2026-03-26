@@ -1,0 +1,21 @@
+[project]
+name = "asl-translator"
+version = "0.1.0"
+description = "Minimal ASL to pytest translator"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+smartworkmate-acceptance = "smartworkmate.acceptance_spec.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["smartworkmate*"]

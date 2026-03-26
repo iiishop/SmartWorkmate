@@ -1,0 +1,1 @@
+"""SmartWorkmate core package."""
