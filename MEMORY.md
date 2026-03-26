@@ -14,3 +14,6 @@
 - Added CLI entrypoint `smartworkmate-acceptance` to compile ASL and run pytest, defaulting to compact `verdict.lvf` with optional `--include-json`.
 - Generated pytest resolver now supports dotted target paths that traverse class attributes (e.g. `algo.Algo.sort_non_decreasing`).
 - Codegen optimization: perf sampling logic now routes through shared `_measure()` helper, `given` variables are injected per-statement minimum, and builtin helpers are emitted only when referenced in generated expressions.
+- Reporting upgraded to sub-assertion granularity: statement plans (`value_n` / `perf_n`) now map junit failures into per-check statuses for both LVF and JSON outputs.
+- CLI workflow updated to one-command mode: `uv run smartworkmate-acceptance <task.md>` now defaults to saving `docs/acceptances/<TASK>.lvf` (and `<TASK>.json` when `--include-json`), while generated pytest and junit files are temp-only and cleaned automatically.
+- User requested a Kimaki capability inventory in a function-style format (index + params + return + behavior) and plans to select numbered items to turn into Python wrappers.

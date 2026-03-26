@@ -8,11 +8,21 @@ Status = Literal["pass", "fail", "error"]
 
 
 @dataclass(slots=True)
+class CheckResult:
+    key: str
+    kind: str
+    status: Status
+    detail: str
+    metrics: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StatementResult:
     statement_index: int
     status: Status
     detail: str
     metrics: dict[str, float] = field(default_factory=dict)
+    checks: list[CheckResult] = field(default_factory=list)
 
 
 @dataclass(slots=True)
