@@ -22,10 +22,9 @@ def test_codegen_emits_non_short_circuit_failure_collection() -> None:
 
     assert "failures = []" in code
     assert "assert not failures" in code
-    assert "for _ in range(warmup_n_1):" in code
-    assert "for _ in range(sample_n_1):" in code
-    assert "for _ in range(warmup_n_2):" in code
-    assert "for _ in range(sample_n_2):" in code
+    assert "def _measure(func, sample_n, warmup_n, metric):" in code
+    assert "_measure(lambda: sort(A_small), sample_n_1, warmup_n_1, metric_1)" in code
+    assert "_measure(lambda: sort(A_small), sample_n_2, warmup_n_2, metric_2)" in code
 
 
 def test_codegen_binds_perf_measurement_to_statement_call_context() -> None:
@@ -47,6 +46,35 @@ def test_codegen_binds_perf_measurement_to_statement_call_context() -> None:
     assert "metric_1 = '$p_ms'" in code
 
 
+def test_codegen_injects_only_required_given_variables() -> None:
+    source = """
+    using python;
+    test algo.sort_non_decreasing as sort;
+    test algo.max_value as maxv;
+    given {
+      A_small: int[] = [3, 1, 2, 2];
+      B_small: int[] = [5, 1, 9, 2];
+    }
+    expect {
+      sort(A_small) == [1, 2, 2, 3];
+      maxv(B_small) == 9;
+    }
+    """
+
+    ir = compile_to_ir(parse_spec(source))
+    code = generate_pytest_module(ir)
+
+    statement_1 = code.split("def test_statement_1():", 1)[1].split(
+        "def test_statement_2():", 1
+    )[0]
+    statement_2 = code.split("def test_statement_2():", 1)[1]
+
+    assert "A_small = [3, 1, 2, 2]" in statement_1
+    assert "B_small = [5, 1, 9, 2]" not in statement_1
+    assert "B_small = [5, 1, 9, 2]" in statement_2
+    assert "A_small = [3, 1, 2, 2]" not in statement_2
+
+
 def test_codegen_supports_builtin_value_functions() -> None:
     source = """
     using python;
@@ -63,3 +91,4 @@ def test_codegen_supports_builtin_value_functions() -> None:
     code = generate_pytest_module(ir)
 
     assert "__asl_builtin_multiset" in code
+    assert "__asl_builtin_len" not in code

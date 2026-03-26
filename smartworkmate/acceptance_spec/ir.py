@@ -38,6 +38,7 @@ class IRStatement:
     bound_call_code: str | None
     value_checks: list[IRValueCheck]
     perf_checks: list[IRPerfCheck]
+    used_given_names: list[str]
 
 
 @dataclass(slots=True)
@@ -52,7 +53,8 @@ def compile_to_ir(spec: SpecDocument) -> IRSpec:
     validate_semantics(spec)
     tests = {item.alias: item.target_path for item in spec.tests}
     given_values = {item.name: expr_to_python(item.value) for item in spec.given}
-    statements = [_compile_statement(stmt, tests) for stmt in spec.expect]
+    given_names = set(given_values.keys())
+    statements = [_compile_statement(stmt, tests, given_names) for stmt in spec.expect]
     return IRSpec(
         language=spec.language,
         tests=tests,
@@ -62,7 +64,9 @@ def compile_to_ir(spec: SpecDocument) -> IRSpec:
 
 
 def _compile_statement(
-    statement: ExpectStatement, tests: dict[str, str]
+    statement: ExpectStatement,
+    tests: dict[str, str],
+    given_names: set[str],
 ) -> IRStatement:
     value_checks: list[IRValueCheck] = []
     perf_checks: list[IRPerfCheck] = []
@@ -84,9 +88,41 @@ def _compile_statement(
     if perf_checks:
         bound_call = _resolve_bound_call(statement, tests)
 
+    used_given_names = sorted(_collect_used_given_names(statement, given_names))
+
     return IRStatement(
-        bound_call_code=bound_call, value_checks=value_checks, perf_checks=perf_checks
+        bound_call_code=bound_call,
+        value_checks=value_checks,
+        perf_checks=perf_checks,
+        used_given_names=used_given_names,
     )
+
+
+def _collect_used_given_names(
+    statement: ExpectStatement,
+    given_names: set[str],
+) -> set[str]:
+    used: set[str] = set()
+    for predicate in statement.predicates:
+        used.update(_collect_identifiers(predicate.left))
+        used.update(_collect_identifiers(predicate.right))
+    return used.intersection(given_names)
+
+
+def _collect_identifiers(expr) -> set[str]:
+    if isinstance(expr, Identifier):
+        return {expr.name}
+    if isinstance(expr, CallExpr):
+        names: set[str] = set()
+        for arg in expr.args:
+            names.update(_collect_identifiers(arg))
+        return names
+    if isinstance(expr, ArrayLiteral):
+        names: set[str] = set()
+        for item in expr.items:
+            names.update(_collect_identifiers(item))
+        return names
+    return set()
 
 
 def _resolve_bound_call(statement: ExpectStatement, tests: dict[str, str]) -> str:

@@ -13,3 +13,4 @@
 - Alias conflict policy: test aliases cannot collide with builtin names (including `$`-stripped forms like `p_ms`) to prevent ambiguity.
 - Added CLI entrypoint `smartworkmate-acceptance` to compile ASL and run pytest, defaulting to compact `verdict.lvf` with optional `--include-json`.
 - Generated pytest resolver now supports dotted target paths that traverse class attributes (e.g. `algo.Algo.sort_non_decreasing`).
+- Codegen optimization: perf sampling logic now routes through shared `_measure()` helper, `given` variables are injected per-statement minimum, and builtin helpers are emitted only when referenced in generated expressions.
