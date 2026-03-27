@@ -17,3 +17,5 @@
 - Reporting upgraded to sub-assertion granularity: statement plans (`value_n` / `perf_n`) now map junit failures into per-check statuses for both LVF and JSON outputs.
 - CLI workflow updated to one-command mode: `uv run smartworkmate-acceptance <task.md>` now defaults to saving `docs/acceptances/<TASK>.lvf` (and `<TASK>.json` when `--include-json`), while generated pytest and junit files are temp-only and cleaned automatically.
 - User requested a Kimaki capability inventory in a function-style format (index + params + return + behavior) and plans to select numbered items to turn into Python wrappers.
+- Operational preference: user runs Kimaki via `npx kimaki` and future tasks should assume Kimaki is already running; avoid duplicate sends when performing message-send requests.
+- Kimaki wrapper API was consolidated so `smartworkmate/kimaki/kimaki.py` now exposes only `send_to_channel_subthread(...)`; prior `send_to_channel`/`send_to_thread` were removed from the public API to keep a single idempotent send-or-create entrypoint.
