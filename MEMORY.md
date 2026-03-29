@@ -19,3 +19,12 @@
 - User requested a Kimaki capability inventory in a function-style format (index + params + return + behavior) and plans to select numbered items to turn into Python wrappers.
 - Operational preference: user runs Kimaki via `npx kimaki` and future tasks should assume Kimaki is already running; avoid duplicate sends when performing message-send requests.
 - Kimaki wrapper API was consolidated so `smartworkmate/kimaki/kimaki.py` now exposes only `send_to_channel_subthread(...)`; prior `send_to_channel`/`send_to_thread` were removed from the public API to keep a single idempotent send-or-create entrypoint.
+- OpenCode wrapper now auto-resolves executable on Windows in this order: `OPENCODE_EXECUTABLE` env, `opencode`, `opencode.cmd`, `%APPDATA%\\npm\\opencode.cmd`, `npx -y opencode`, then fallback `opencode`; this avoids `FileNotFoundError` under `uv run` subprocess calls.
+- Added OpenCode task markdown scan contract: given `project_root`, only include `*.md` directly under `docs/tasks`, `docs/tasks/LRisk`, and `docs/tasks/HRisk`, and accept files only when the final line is exactly `--FIN--`.
+
+## Task Document Parsing Contract For Agent State Machine Inputs
+
+- Added three OpenCode task-doc readers: `read_task_requirements`, `read_task_design`, `read_task_acceptance`, each returning `(task_id, section_text)`.
+- Task doc parsing enforces YAML frontmatter with mandatory `task_id` and strict section boundaries: `任务需求` -> `任务设计` -> `交付验收`.
+- `交付验收` extraction ends at final marker line `--FIN--`; acceptance content is ASL-validated using existing `acceptance_spec` parser + semantic validator (syntax/semantic only).
+- Duplicate `task_id` policy: when duplicates exist under `docs/tasks/**/*.md`, the newest file (by mtime) is treated as blocked and raises an explicit error when selected.
