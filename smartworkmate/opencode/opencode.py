@@ -6,7 +6,7 @@ import re
 from smartworkmate.acceptance_spec.parser import parse_spec
 from smartworkmate.acceptance_spec.semantic import validate_semantics
 
-from .models import OpenCodeProject, OpenCodeSession
+from .models import OpenCodeProject, OpenCodeSession, OpenCodeTaskRecord
 from .tools import normalize_directory, require_text, run_json_command
 
 
@@ -22,6 +22,10 @@ _TASK_DESIGN_HEADING = re.compile(r"^##\s*任务设计\s*$", re.MULTILINE)
 _TASK_ACCEPTANCE_HEADING = re.compile(r"^##\s*交付验收\s*$", re.MULTILINE)
 _ASL_FENCE_RE = re.compile(r"```asl\s*\n([\s\S]*?)\n```", re.IGNORECASE)
 _TASK_ID_RE = re.compile(r"^\s*task_id\s*:\s*(.*?)\s*$", re.MULTILINE)
+_STATUS_RE = re.compile(r"^\s*status\s*:\s*.*$", re.MULTILINE)
+
+_TASK_INDEX_BY_PROJECT: dict[str, dict[str, OpenCodeTaskRecord]] = {}
+_TASK_ID_BY_PATH_BY_PROJECT: dict[str, dict[str, str]] = {}
 
 
 def list_projects() -> list[OpenCodeProject]:
@@ -82,6 +86,7 @@ def scan_task_markdown_documents(project_root: str) -> list[str]:
     require_text("project_root", project_root)
     root = Path(project_root.strip())
     tasks_root = root / "docs" / "tasks"
+    project_key = str(root.resolve())
 
     search_dirs = [tasks_root, tasks_root / "LRisk", tasks_root / "HRisk"]
     candidates: set[Path] = set()
@@ -92,7 +97,51 @@ def scan_task_markdown_documents(project_root: str) -> list[str]:
             if path.is_file() and _has_exact_fin_last_line(path):
                 candidates.add(path)
 
-    return [str(path) for path in sorted(candidates)]
+    sorted_candidates = sorted(candidates)
+    _rebuild_task_index(project_key, sorted_candidates)
+    return [str(path) for path in sorted_candidates]
+
+
+def find_task_path_by_task_id(project_root: str, task_id: str) -> str:
+    require_text("project_root", project_root)
+    require_text("task_id", task_id)
+
+    records = _get_task_index(project_root)
+    wanted = task_id.strip()
+    record = records.get(wanted)
+    if record is None:
+        raise ValueError(f"task_id not found: {wanted}")
+    return record.path
+
+
+def get_task_status_by_task_id(project_root: str, task_id: str) -> str:
+    records = _get_task_index(project_root)
+    wanted = task_id.strip()
+    record = records.get(wanted)
+    if record is None:
+        raise ValueError(f"task_id not found: {wanted}")
+    return record.status
+
+
+def block_task(project_root: str, task_id: str) -> tuple[str, str]:
+    require_text("project_root", project_root)
+    require_text("task_id", task_id)
+
+    path = Path(find_task_path_by_task_id(project_root, task_id))
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if lines and lines[-1] == "--FIN--":
+        lines = lines[:-1]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    update_task_status(project_root, task_id, "blocked")
+
+    project_key = str(Path(project_root.strip()).resolve())
+    index = _TASK_INDEX_BY_PROJECT.get(project_key, {})
+    index.pop(task_id.strip(), None)
+    path_index = _TASK_ID_BY_PATH_BY_PROJECT.get(project_key, {})
+    path_index.pop(str(path.resolve()), None)
+    return task_id.strip(), "blocked"
 
 
 def _has_exact_fin_last_line(path: Path) -> bool:
@@ -103,8 +152,8 @@ def _has_exact_fin_last_line(path: Path) -> bool:
     return lines[-1] == "--FIN--"
 
 
-def read_task_requirements(project_root: str, task_markdown_path: str) -> tuple[str, str]:
-    path, task_id, body = _prepare_task_read(project_root, task_markdown_path)
+def read_task_requirements(project_root: str, task_id: str) -> tuple[str, str]:
+    path, task_id, body = _prepare_task_read_by_task_id(project_root, task_id)
     _ensure_duplicate_task_id_policy(project_root, task_id=task_id, target_path=path)
 
     requirements = _extract_section(
@@ -116,8 +165,8 @@ def read_task_requirements(project_root: str, task_markdown_path: str) -> tuple[
     return task_id, requirements
 
 
-def read_task_design(project_root: str, task_markdown_path: str) -> tuple[str, str]:
-    path, task_id, body = _prepare_task_read(project_root, task_markdown_path)
+def read_task_design(project_root: str, task_id: str) -> tuple[str, str]:
+    path, task_id, body = _prepare_task_read_by_task_id(project_root, task_id)
     _ensure_duplicate_task_id_policy(project_root, task_id=task_id, target_path=path)
 
     design = _extract_section(
@@ -129,8 +178,8 @@ def read_task_design(project_root: str, task_markdown_path: str) -> tuple[str, s
     return task_id, design
 
 
-def read_task_acceptance(project_root: str, task_markdown_path: str) -> tuple[str, str]:
-    path, task_id, body = _prepare_task_read(project_root, task_markdown_path)
+def read_task_acceptance(project_root: str, task_id: str) -> tuple[str, str]:
+    path, task_id, body = _prepare_task_read_by_task_id(project_root, task_id)
     _ensure_duplicate_task_id_policy(project_root, task_id=task_id, target_path=path)
 
     acceptance = _extract_acceptance_section(body)
@@ -143,23 +192,18 @@ def read_task_acceptance(project_root: str, task_markdown_path: str) -> tuple[st
     return task_id, acceptance
 
 
-def _prepare_task_read(project_root: str, task_markdown_path: str) -> tuple[Path, str, str]:
+def _prepare_task_read_by_task_id(project_root: str, task_id: str) -> tuple[Path, str, str]:
     require_text("project_root", project_root)
-    require_text("task_markdown_path", task_markdown_path)
+    require_text("task_id", task_id)
 
-    root = Path(project_root.strip())
-    path = Path(task_markdown_path.strip())
-    if not path.is_absolute():
-        path = root / path
-    if not path.exists():
-        raise ValueError(f"task markdown not found: {path}")
+    path = Path(find_task_path_by_task_id(project_root, task_id.strip()))
 
     text = path.read_text(encoding="utf-8")
     frontmatter, body = _split_frontmatter(text)
-    task_id = _extract_task_id_from_frontmatter(frontmatter)
-    if not task_id:
+    stored_task_id = _extract_task_id_from_frontmatter(frontmatter)
+    if not stored_task_id:
         raise ValueError(f"task_id is required in YAML frontmatter: {path}")
-    return path, task_id, body
+    return path, stored_task_id, body
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -259,3 +303,104 @@ def _extract_task_id_from_frontmatter(frontmatter: str) -> str:
     ):
         value = value[1:-1].strip()
     return value
+
+
+def _extract_status_from_frontmatter(frontmatter: str) -> str:
+    match = _STATUS_RE.search(frontmatter)
+    if match is None:
+        return ""
+    line = match.group(0)
+    _, _, value = line.partition(":")
+    return value.strip().strip("\"'")
+
+
+def update_task_status(
+    project_root: str,
+    task_id: str,
+    new_status: str,
+) -> tuple[str, str]:
+    require_text("project_root", project_root)
+    require_text("task_id", task_id)
+    require_text("new_status", new_status)
+
+    path = Path(find_task_path_by_task_id(project_root, task_id))
+
+    text = path.read_text(encoding="utf-8")
+    frontmatter, body = _split_frontmatter(text)
+    stored_task_id = _extract_task_id_from_frontmatter(frontmatter)
+    if not stored_task_id:
+        raise ValueError(f"task_id is required in YAML frontmatter: {path}")
+    if stored_task_id != task_id.strip():
+        raise ValueError(
+            f"task_id mismatch for {path}: expected {task_id.strip()}, got {stored_task_id}"
+        )
+
+    status_line = f"status: {new_status.strip()}"
+    if _STATUS_RE.search(frontmatter):
+        new_frontmatter = _STATUS_RE.sub(status_line, frontmatter, count=1)
+    else:
+        suffix = "\n" if frontmatter.endswith("\n") else ""
+        new_frontmatter = frontmatter + suffix + status_line
+
+    rebuilt = f"---\n{new_frontmatter}\n---\n{body}"
+    path.write_text(rebuilt, encoding="utf-8")
+    project_key = str(Path(project_root.strip()).resolve())
+    records = _TASK_INDEX_BY_PROJECT.setdefault(project_key, {})
+    records[stored_task_id] = OpenCodeTaskRecord(
+        task_id=stored_task_id,
+        path=str(path),
+        status=new_status.strip(),
+        mtime=path.stat().st_mtime,
+    )
+    return stored_task_id, new_status.strip()
+
+
+def _get_task_index(project_root: str) -> dict[str, OpenCodeTaskRecord]:
+    root = Path(project_root.strip())
+    project_key = str(root.resolve())
+    if project_key not in _TASK_INDEX_BY_PROJECT:
+        scan_task_markdown_documents(project_root)
+    return _TASK_INDEX_BY_PROJECT.get(project_key, {})
+
+
+def _rebuild_task_index(project_key: str, files: list[Path]) -> None:
+    previous_by_path = _TASK_ID_BY_PATH_BY_PROJECT.get(project_key, {})
+    next_by_task: dict[str, OpenCodeTaskRecord] = {}
+    next_by_path: dict[str, str] = {}
+
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        frontmatter, _ = _split_frontmatter(text)
+        task_id = _extract_task_id_from_frontmatter(frontmatter)
+        if not task_id:
+            raise ValueError(f"task_id is required in YAML frontmatter: {path}")
+
+        resolved_path = str(path.resolve())
+        previous_task_id = previous_by_path.get(resolved_path)
+        if previous_task_id is not None and previous_task_id != task_id:
+            raise ValueError(
+                f"task_id is immutable for path {path}: {previous_task_id} -> {task_id}"
+            )
+
+        status = _extract_status_from_frontmatter(frontmatter) or "todo"
+        if task_id in next_by_task:
+            existing = next_by_task[task_id]
+            existing_path = Path(existing.path)
+            existing_mtime = existing.mtime
+            current_mtime = path.stat().st_mtime
+            newer = path if current_mtime >= existing_mtime else existing_path
+            older = existing_path if newer.resolve() == path.resolve() else path
+            raise ValueError(
+                f"duplicate task_id {task_id} detected: blocked newer task {newer}; conflicts with {older}"
+            )
+
+        next_by_task[task_id] = OpenCodeTaskRecord(
+            task_id=task_id,
+            path=str(path),
+            status=status,
+            mtime=path.stat().st_mtime,
+        )
+        next_by_path[resolved_path] = task_id
+
+    _TASK_INDEX_BY_PROJECT[project_key] = next_by_task
+    _TASK_ID_BY_PATH_BY_PROJECT[project_key] = next_by_path

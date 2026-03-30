@@ -28,3 +28,10 @@
 - Task doc parsing enforces YAML frontmatter with mandatory `task_id` and strict section boundaries: `任务需求` -> `任务设计` -> `交付验收`.
 - `交付验收` extraction ends at final marker line `--FIN--`; acceptance content is ASL-validated using existing `acceptance_spec` parser + semantic validator (syntax/semantic only).
 - Duplicate `task_id` policy: when duplicates exist under `docs/tasks/**/*.md`, the newest file (by mtime) is treated as blocked and raises an explicit error when selected.
+- Added simple task-status write-through helper `update_task_status(task_markdown_path, new_status)` that rewrites YAML frontmatter `status` without transition validation; used for direct state switches like `pre_verify` naming normalization.
+- Added `find_task_path_by_task_id(project_root, task_id)` to map task IDs to markdown file paths under `docs/tasks/**/*.md`; enforces uniqueness and raises on missing/duplicate IDs.
+- Added `get_task_status_by_task_id(project_root, task_id)` built on task-id path lookup; reads YAML frontmatter `status` and defaults to `todo` when status is absent.
+- `scan_task_markdown_documents` now also rebuilds in-memory task index by project (`task_id -> {path,status,mtime}`) from FIN-frozen tasks, enforcing unique task_id and path-level task_id immutability across scans.
+- `update_task_status` signature changed to task-id workflow: `update_task_status(project_root, task_id, new_status)` resolves path through the task index and updates both markdown frontmatter and in-memory index state.
+- Added `block_task(project_root, task_id)` workflow: remove terminal `--FIN--`, set status to `blocked`, then remove the task from the FIN-indexed task dictionary.
+- Task section readers are now task-id driven (`read_task_requirements/read_task_design/read_task_acceptance` accept `project_root + task_id`), resolving path via indexed task lookup instead of direct file path input.

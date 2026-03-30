@@ -19,3 +19,11 @@ class OpenCodeSession:
     directory: str
     title: str
     raw: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class OpenCodeTaskRecord:
+    task_id: str
+    path: str
+    status: str
+    mtime: float

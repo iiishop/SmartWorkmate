@@ -173,13 +173,53 @@ def test_scan_task_markdown_documents_collects_only_fin_marked_files(
     (docs_tasks / "LRisk").mkdir(parents=True)
     (docs_tasks / "HRisk").mkdir(parents=True)
 
-    (docs_tasks / "A.md").write_text("line\n--FIN--", encoding="utf-8")
-    (docs_tasks / "B.md").write_text("line\n--NOT-FIN--", encoding="utf-8")
+    (docs_tasks / "A.md").write_text(
+        "---\n"
+        "task_id: TSK-A\n"
+        "status: todo\n"
+        "---\n"
+        "line\n"
+        "--FIN--",
+        encoding="utf-8",
+    )
+    (docs_tasks / "B.md").write_text(
+        "---\n"
+        "task_id: TSK-B\n"
+        "status: todo\n"
+        "---\n"
+        "line\n"
+        "--NOT-FIN--",
+        encoding="utf-8",
+    )
     (docs_tasks / "notes.txt").write_text("line\n--FIN--", encoding="utf-8")
-    (docs_tasks / "LRisk" / "C.md").write_text("x\n--FIN--", encoding="utf-8")
-    (docs_tasks / "HRisk" / "D.md").write_text("x\n--FIN--", encoding="utf-8")
+    (docs_tasks / "LRisk" / "C.md").write_text(
+        "---\n"
+        "task_id: TSK-C\n"
+        "status: todo\n"
+        "---\n"
+        "x\n"
+        "--FIN--",
+        encoding="utf-8",
+    )
+    (docs_tasks / "HRisk" / "D.md").write_text(
+        "---\n"
+        "task_id: TSK-D\n"
+        "status: todo\n"
+        "---\n"
+        "x\n"
+        "--FIN--",
+        encoding="utf-8",
+    )
     (docs_tasks / "misc" / "E.md").parent.mkdir(parents=True, exist_ok=True)
-    (docs_tasks / "misc" / "E.md").write_text("x\n--FIN--", encoding="utf-8")
+    (docs_tasks / "misc" / "E.md").write_text(
+        "---\n"
+        "task_id: TSK-E\n"
+        "status: todo\n"
+        "---\n"
+        "x\n"
+        "--FIN--",
+        encoding="utf-8",
+    )
 
     files = scan_task_markdown_documents(str(root))
 
@@ -196,8 +236,25 @@ def test_scan_task_markdown_documents_rejects_trailing_content_after_fin(
 ) -> None:
     docs_tasks = tmp_path / "docs" / "tasks"
     docs_tasks.mkdir(parents=True)
-    (docs_tasks / "A.md").write_text("line\n--FIN--\n", encoding="utf-8")
-    (docs_tasks / "B.md").write_text("line\n--FIN--\nextra", encoding="utf-8")
+    (docs_tasks / "A.md").write_text(
+        "---\n"
+        "task_id: TSK-A\n"
+        "status: todo\n"
+        "---\n"
+        "line\n"
+        "--FIN--\n",
+        encoding="utf-8",
+    )
+    (docs_tasks / "B.md").write_text(
+        "---\n"
+        "task_id: TSK-B\n"
+        "status: todo\n"
+        "---\n"
+        "line\n"
+        "--FIN--\n"
+        "extra",
+        encoding="utf-8",
+    )
 
     files = scan_task_markdown_documents(str(tmp_path))
 
